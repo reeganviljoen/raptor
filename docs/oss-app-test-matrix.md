@@ -66,7 +66,7 @@ The offline runner returns one structured result per worker/probe, or one fixtur
 Result statuses are:
 
 - `passed`: probe matched its expected response and is not a known failure.
-- `expected_known_failure`: probe matched the expected response for a documented known failure.
+- `expected_known_failure`: the observed response or error matched a documented known failure's phase, category, error class, and message.
 - `boot_failure`: the fixture failed before serving probes.
 - `request_failure`: the harness could not complete the probe request.
 - `assertion_failure`: the probe completed, but the response did not match the manifest.

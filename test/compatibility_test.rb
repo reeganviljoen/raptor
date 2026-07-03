@@ -107,6 +107,68 @@ class CompatibilityTest < Minitest::Test
     assert_equal "harness_environment", harness_result.phase
   end
 
+  def test_request_exception_known_failures_match_manifest_phase_and_error_metadata
+    failure = {
+      "id" => "socket_closed",
+      "phase" => "request",
+      "category" => "http_parser",
+      "error_class" => "IOError",
+      "message" => "socket closed"
+    }
+    fixture = Struct.new(:name, :known_failures).new("phase_fixture", [failure])
+    runner = RaptorCompatibility::Runner.new(fixture, self)
+    probe = {
+      "name" => "request_exception",
+      "category" => "rack_env",
+      "known_failure" => "socket_closed",
+      "request" => { "path" => "/" },
+      "expect" => { "status" => 200 }
+    }
+
+    runner.define_singleton_method(:request_probe) { |_probe, _port| raise IOError, "socket closed while reading" }
+    expected_result = runner.send(:run_probe, probe, 9292, 1)
+
+    assert_equal "expected_known_failure", expected_result.status
+    assert_equal "socket_closed", expected_result.known_failure_id
+    assert_equal "http_parser", expected_result.category
+
+    runner.define_singleton_method(:request_probe) { |_probe, _port| raise IOError, "different request error" }
+    unexpected_result = runner.send(:run_probe, probe, 9292, 1)
+
+    assert_equal "request_failure", unexpected_result.status
+    assert_equal "socket_closed", unexpected_result.known_failure_id
+  end
+
+  def test_boot_known_failures_match_manifest_phase_and_error_metadata
+    failure = {
+      "id" => "boot_isolation",
+      "phase" => "boot",
+      "category" => "ractor_boot",
+      "error_class" => "Ractor::IsolationError",
+      "message" => "non-shareable constant"
+    }
+    fixture = Struct.new(:name, :known_failures).new("boot_fixture", [failure])
+    runner = RaptorCompatibility::Runner.new(fixture, self)
+
+    expected_result = runner.send(
+      :startup_failure_result,
+      1,
+      Raptor::ConfigurationError.new("worker 0 failed to boot: Ractor::IsolationError: non-shareable constant")
+    )
+
+    assert_equal "expected_known_failure", expected_result.status
+    assert_equal "boot_isolation", expected_result.known_failure_id
+
+    unexpected_result = runner.send(
+      :startup_failure_result,
+      1,
+      Raptor::ConfigurationError.new("worker 0 failed to boot: NameError: missing constant")
+    )
+
+    assert_equal "boot_failure", unexpected_result.status
+    assert_nil unexpected_result.known_failure_id
+  end
+
   private
 
   def fixtures

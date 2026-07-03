@@ -72,38 +72,45 @@ module RaptorCompatibility
       response = request_probe(probe, port)
       assert_probe(probe, response, workers)
       known_failure = known_failure_for(probe)
+      expected_failure = known_failure_matches?(known_failure, "request")
 
       Result.new(
         fixture: fixture.name,
         worker_count: workers,
         probe_name: probe.fetch("name"),
         phase: "request",
-        status: known_failure ? "expected_known_failure" : "passed",
-        category: known_failure ? known_failure.fetch("category") : probe.fetch("category"),
-        known_failure_id: known_failure&.fetch("id"),
+        status: expected_failure ? "expected_known_failure" : "passed",
+        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
+        known_failure_id: expected_failure ? known_failure.fetch("id") : nil,
         response: response
       )
     rescue Minitest::Assertion => error
+      known_failure = known_failure_for(probe)
+      expected_failure = known_failure_matches?(known_failure, "assertion", error: error)
+
       Result.new(
         fixture: fixture.name,
         worker_count: workers,
         probe_name: probe.fetch("name"),
         phase: "assertion",
-        status: "assertion_failure",
-        category: probe.fetch("category"),
+        status: expected_failure ? "expected_known_failure" : "assertion_failure",
+        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
         known_failure_id: probe["known_failure"],
         error_class: error.class.name,
         message: error.message,
         response: response
       )
     rescue StandardError => error
+      known_failure = known_failure_for(probe)
+      expected_failure = known_failure_matches?(known_failure, "request", error: error)
+
       Result.new(
         fixture: fixture.name,
         worker_count: workers,
         probe_name: probe.fetch("name"),
         phase: "request",
-        status: "request_failure",
-        category: probe.fetch("category"),
+        status: expected_failure ? "expected_known_failure" : "request_failure",
+        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
         known_failure_id: probe["known_failure"],
         error_class: error.class.name,
         message: error.message
@@ -215,12 +222,16 @@ module RaptorCompatibility
           message: error.message
         )
       else
+        known_failure = known_failure_for_phase("boot", error)
+        expected_failure = known_failure_matches?(known_failure, "boot", error: error)
+
         Result.new(
           fixture: fixture.name,
           worker_count: workers,
           phase: "boot",
-          status: "boot_failure",
-          category: "ractor_boot",
+          status: expected_failure ? "expected_known_failure" : "boot_failure",
+          category: expected_failure ? known_failure.fetch("category") : "ractor_boot",
+          known_failure_id: expected_failure ? known_failure.fetch("id") : nil,
           error_class: error.class.name,
           message: error.message
         )
@@ -267,6 +278,27 @@ module RaptorCompatibility
       return nil unless failure_id
 
       fixture.known_failures.find { |failure| failure.fetch("id") == failure_id }
+    end
+
+    def known_failure_for_phase(phase, error = nil)
+      fixture.known_failures.find do |failure|
+        known_failure_matches?(failure, phase, error: error)
+      end
+    end
+
+    def known_failure_matches?(known_failure, phase, error: nil)
+      return false unless known_failure
+      return false unless known_failure.fetch("phase").to_s == phase
+      return true unless error
+
+      expected_class = known_failure.fetch("error_class").to_s
+      expected_message = known_failure.fetch("message").to_s
+      observed_class = error.class.name
+      observed_message = error.message.to_s
+
+      class_matches = expected_class.empty? || observed_class == expected_class || observed_message.include?(expected_class)
+      message_matches = expected_message.empty? || observed_message.include?(expected_message)
+      class_matches && message_matches
     end
   end
 end
