@@ -1,0 +1,38 @@
+id: rack_basic
+stage: rack_baseline
+offline: true
+transport: tcp_loopback
+requires:
+  gems:
+    rack: ">= 3.0"
+covers:
+  - rack_env
+  - response_writer
+  - ractor_boot
+workers:
+  - 1
+  - 2
+known_failures: []
+notes: >
+  Baseline Rack fixture without Rack::Lint. This proves the compatibility
+  harness can record passing Rack behavior before adding stricter middleware
+  or real frameworks.
+probes:
+  - name: simple_get
+    category: rack_env
+    request:
+      method: GET
+      path: /basic?source=compat
+      headers:
+        Accept: text/plain
+    expect:
+      status: 200
+      headers:
+        include:
+          content-type: text/plain
+      body:
+        includes:
+          - fixture=rack_basic
+          - query=source=compat
+      invariants:
+        - content_length_matches_body

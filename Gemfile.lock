@@ -1,0 +1,34 @@
+PATH
+  remote: .
+  specs:
+    raptor (0.1.0)
+      rack (>= 3.0, < 4)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    drb (2.2.3)
+    minitest (6.0.6)
+      drb (~> 2.0)
+      prism (~> 1.5)
+    prism (1.9.0)
+    rack (3.2.6)
+
+PLATFORMS
+  arm64-darwin-24
+  ruby
+
+DEPENDENCIES
+  minitest (>= 5.0)
+  raptor!
+
+CHECKSUMS
+  bundler (4.0.13) sha256=19f08be7f27022cf0b89f27da0b044ae075e8270a9ef44ad248a932614e1ca3b
+  drb (2.2.3)
+  minitest (6.0.6)
+  prism (1.9.0)
+  rack (3.2.6)
+  raptor (0.1.0)
+
+BUNDLED WITH
+  4.0.13

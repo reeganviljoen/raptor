@@ -1,0 +1,44 @@
+id: rack_lint_basic
+stage: rack_lint
+offline: true
+transport: tcp_loopback
+requires:
+  gems:
+    rack: ">= 3.0"
+covers:
+  - rack_env
+  - response_writer
+  - ractor_runtime
+workers:
+  - 1
+  - 2
+known_failures:
+  - id: rack_lint_non_shareable_status_constant
+    phase: request
+    category: ractor_runtime
+    error_class: Ractor::IsolationError
+    message: Rack::Lint accesses Rack::Utils::STATUS_WITH_NO_ENTITY_BODY, which is not shareable from a worker Ractor.
+notes: >
+  Rack::Lint fixture. This currently records a known Ractor compatibility gap:
+  Rack::Lint reaches Rack::Utils::STATUS_WITH_NO_ENTITY_BODY, which is not
+  shareable when accessed from a worker Ractor in this boot shape.
+probes:
+  - name: simple_get
+    category: rack_env
+    known_failure: rack_lint_non_shareable_status_constant
+    request:
+      method: GET
+      path: /lint?source=compat
+      headers:
+        Accept: text/plain
+    expect:
+      status: 500
+      headers:
+        include:
+          content-type: text/plain
+      body:
+        includes:
+          - Ractor::IsolationError
+          - STATUS_WITH_NO_ENTITY_BODY
+      invariants:
+        - content_length_matches_body
