@@ -33,6 +33,7 @@ Measure isolation, memory behavior, request concurrency, boot cost, worker scali
 
 ## Research Artifacts
 
+- [roadmap.md](roadmap.md) maps the current work into a GitHub issue milestone.
 - [puma-comparison.md](puma-comparison.md) tracks where Raptor mirrors Puma and where Ractor workers force different semantics.
 - [oss-app-test-matrix.md](oss-app-test-matrix.md) defines the staged real-world Rack app compatibility plan.
 - [ractor-tradeoffs.md](ractor-tradeoffs.md) records the expected benefits, costs, research risks, and next experiments.

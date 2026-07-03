@@ -73,6 +73,7 @@ Start with:
 
 - [docs/research.md](docs/research.md) for the initial design constraints and Ruby/Puma references.
 - [docs/research-roadmap.md](docs/research-roadmap.md) for the current research questions and experiment tracks.
+- [docs/roadmap.md](docs/roadmap.md) for the working GitHub issue roadmap.
 - [docs/puma-comparison.md](docs/puma-comparison.md) for Puma API and architecture parity notes.
 - [docs/oss-app-test-matrix.md](docs/oss-app-test-matrix.md) for the staged real-world Rack app compatibility plan.
 - [docs/ractor-tradeoffs.md](docs/ractor-tradeoffs.md) for expected advantages, disadvantages, and experiments.
