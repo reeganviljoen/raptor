@@ -8,9 +8,103 @@ class CompatibilityTest < Minitest::Test
   FIXTURE_ROOT = File.expand_path("compatibility/fixtures", __dir__)
 
   def test_offline_compatibility_fixtures
-    fixtures.each do |fixture|
+    results = fixtures.flat_map do |fixture|
       RaptorCompatibility::Runner.new(fixture, self).run
     end
+
+    assert results.any? { |result| result.status == "passed" }
+    assert results.any?(&:expected_known_failure?)
+
+    results.each do |result|
+      result_hash = result.to_h
+      assert result_hash.fetch(:fixture)
+      assert result_hash.fetch(:phase)
+      assert result_hash.fetch(:status)
+      assert result_hash.fetch(:category)
+    end
+  end
+
+  def test_runner_preserves_duplicate_headers_and_supports_expectation_schema
+    fixture = fixtures.find { |candidate| candidate.name == "rack_basic" }
+    runner = RaptorCompatibility::Runner.new(fixture, self)
+    response = runner.send(
+      :parse_response,
+      "HTTP/1.1 200 OK\r\nX-Debug: one\r\nX-Debug: two\r\nContent-Length: 2\r\n\r\nok"
+    )
+
+    assert_equal ["one", "two"], response.headers.fetch("x-debug")
+
+    probe = {
+      "name" => "schema_probe",
+      "category" => "rack_env",
+      "request" => { "path" => "/" },
+      "expect" => {
+        "status" => 200,
+        "headers" => {
+          "include" => { "x-debug" => "one" },
+          "exact" => { "x-debug" => ["one", "two"] },
+          "absent" => ["x-missing"]
+        },
+        "body" => {
+          "exact" => "ok",
+          "includes" => ["ok"],
+          "excludes" => ["not-ok"]
+        },
+        "invariants" => ["content_length_matches_body"]
+      }
+    }
+
+    runner.send(:assert_probe, probe, response, 1)
+  end
+
+  def test_missing_required_gem_is_reported_as_harness_environment_skip
+    Dir.mktmpdir do |dir|
+      fixture_dir = File.join(dir, "missing_gem")
+      Dir.mkdir(fixture_dir)
+      File.write(File.join(fixture_dir, "config.ru"), <<~RUBY)
+        run proc { |_env| [200, {}, ["ok"]] }
+      RUBY
+      File.write(File.join(fixture_dir, "manifest.yml"), <<~YAML)
+        id: missing_gem
+        stage: rack_baseline
+        offline: true
+        transport: tcp_loopback
+        requires:
+          gems:
+            raptor_fixture_gem_that_does_not_exist: ">= 999"
+        covers:
+          - harness_environment
+        workers:
+          - 1
+        known_failures: []
+        probes:
+          - name: simple_get
+            category: rack_env
+            request:
+              path: /
+            expect:
+              status: 200
+      YAML
+
+      results = RaptorCompatibility::Runner.new(RaptorCompatibility::Fixture.load(fixture_dir), self).run
+
+      assert_equal ["harness_environment_skip"], results.map(&:status)
+      assert_equal "harness_environment", results.first.phase
+      assert_match(/missing fixture requirements/, results.first.message)
+    end
+  end
+
+  def test_startup_failures_are_classified_by_phase
+    fixture = fixtures.find { |candidate| candidate.name == "rack_basic" }
+    runner = RaptorCompatibility::Runner.new(fixture, self)
+
+    boot_result = runner.send(:startup_failure_result, 1, Raptor::ConfigurationError.new("worker failed to boot"))
+    assert_equal "boot_failure", boot_result.status
+    assert_equal "boot", boot_result.phase
+
+    harness_result = runner.send(:startup_failure_result, 1, Errno::EACCES.new("bind"))
+    assert_equal "harness_environment_skip", harness_result.status
+    assert_equal "harness_environment", harness_result.phase
   end
 
   private

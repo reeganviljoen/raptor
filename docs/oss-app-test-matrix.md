@@ -32,6 +32,46 @@ Current fixture:
 - `rack_basic`: runs a tiny plain Rack app with one and two Ractor workers.
 - `rack_lint_basic`: wraps a tiny Rack app in `Rack::Lint` and currently records a known `Ractor::IsolationError` around Rack constants that are not shareable from a worker Ractor.
 
+### Offline Fixture Manifest Schema
+
+Each offline fixture manifest must declare enough structure for the runner to classify failures without guessing:
+
+- `id`: stable fixture identifier.
+- `stage`: matrix stage, such as `rack_baseline` or `rack_lint`.
+- `offline`: whether the fixture can run without external services.
+- `transport`: the bind mode used by the harness, currently `tcp_loopback`.
+- `requires.gems`: gem requirements the harness must satisfy before booting the fixture.
+- `covers`: failure-taxonomy categories exercised by the fixture.
+- `workers`: worker counts to run, usually `1` and `2` for Ractor comparison.
+- `known_failures`: documented expected failures with `id`, `phase`, `category`, `error_class`, and `message`.
+- `probes`: request/expectation pairs with `name`, `category`, `request`, optional `known_failure`, and `expect`.
+- `notes`: optional human-readable research context.
+
+Probe expectations currently support:
+
+- `status`: expected HTTP response status.
+- `body.includes`, `body.excludes`, and `body.exact`.
+- `headers.include`, `headers.exact`, and `headers.absent`. Header names are matched case-insensitively, and duplicate response header lines are preserved as arrays.
+- `invariants`, currently `content_length_matches_body`.
+
+### Structured Fixture Results
+
+The offline runner returns one structured result per worker/probe, or one fixture-level result when the harness environment prevents a run. Each result has a stable JSON-friendly shape:
+
+- `fixture`, `worker_count`, `probe`, `phase`, `status`, and `category`.
+- `known_failure` when a probe is expected to fail for a documented reason.
+- `error_class` and `message` for boot, request, assertion, or harness-environment failures.
+- `response.status`, `response.headers`, `response.body`, and `response.raw` when a response was captured.
+
+Result statuses are:
+
+- `passed`: probe matched its expected response and is not a known failure.
+- `expected_known_failure`: probe matched the expected response for a documented known failure.
+- `boot_failure`: the fixture failed before serving probes.
+- `request_failure`: the harness could not complete the probe request.
+- `assertion_failure`: the probe completed, but the response did not match the manifest.
+- `harness_environment_skip`: a local requirement, bind, permission, or other harness condition prevented a meaningful fixture run.
+
 Run the offline compatibility fixtures with:
 
 ```sh
@@ -67,6 +107,7 @@ Failures should be recorded without hiding them behind compatibility shims:
 - `framework_global_state`
 - `dependency_global_state`
 - `external_service`
+- `harness_environment`
 - `unsupported_rack_feature`
 
 ## Likely Early Blockers
