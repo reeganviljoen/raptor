@@ -72,21 +72,36 @@ module RaptorCompatibility
       response = request_probe(probe, port)
       assert_probe(probe, response, workers)
       known_failure = known_failure_for(probe)
-      expected_failure = known_failure_matches?(known_failure, "request")
+
+      if known_failure
+        if known_failure_matches?(known_failure, "request", response: response)
+          return Result.new(
+            fixture: fixture.name,
+            worker_count: workers,
+            probe_name: probe.fetch("name"),
+            phase: "request",
+            status: "expected_known_failure",
+            category: known_failure.fetch("category"),
+            known_failure_id: known_failure.fetch("id"),
+            response: response
+          )
+        end
+
+        return known_failure_mismatch_result(probe, response, workers, known_failure)
+      end
 
       Result.new(
         fixture: fixture.name,
         worker_count: workers,
         probe_name: probe.fetch("name"),
         phase: "request",
-        status: expected_failure ? "expected_known_failure" : "passed",
-        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
-        known_failure_id: expected_failure ? known_failure.fetch("id") : nil,
+        status: "passed",
+        category: probe.fetch("category"),
         response: response
       )
     rescue Minitest::Assertion => error
       known_failure = known_failure_for(probe)
-      expected_failure = known_failure_matches?(known_failure, "assertion", error: error)
+      expected_failure = known_failure_matches?(known_failure, "assertion", error: error, response: response)
 
       Result.new(
         fixture: fixture.name,
@@ -238,6 +253,21 @@ module RaptorCompatibility
       end
     end
 
+    def known_failure_mismatch_result(probe, response, workers, known_failure)
+      Result.new(
+        fixture: fixture.name,
+        worker_count: workers,
+        probe_name: probe.fetch("name"),
+        phase: "assertion",
+        status: "assertion_failure",
+        category: known_failure.fetch("category"),
+        known_failure_id: known_failure.fetch("id"),
+        error_class: "RaptorCompatibility::KnownFailureMismatch",
+        message: "known_failure=#{known_failure.fetch("id")} did not match response metadata",
+        response: response
+      )
+    end
+
     def missing_requirement_results
       missing = missing_requirements
       return [] if missing.empty?
@@ -286,15 +316,31 @@ module RaptorCompatibility
       end
     end
 
-    def known_failure_matches?(known_failure, phase, error: nil)
+    def known_failure_matches?(known_failure, phase, error: nil, response: nil)
       return false unless known_failure
       return false unless known_failure.fetch("phase").to_s == phase
-      return true unless error
+      return known_failure_error_matches?(known_failure, error) if error
+      return known_failure_response_matches?(known_failure, response) if response
 
-      expected_class = known_failure.fetch("error_class").to_s
-      expected_message = known_failure.fetch("message").to_s
+      true
+    end
+
+    def known_failure_error_matches?(known_failure, error)
       observed_class = error.class.name
       observed_message = error.message.to_s
+
+      known_failure_metadata_matches?(known_failure, observed_class, observed_message)
+    end
+
+    def known_failure_response_matches?(known_failure, response)
+      observed_message = [response.body, response.raw].compact.join("\n")
+
+      known_failure_metadata_matches?(known_failure, nil, observed_message)
+    end
+
+    def known_failure_metadata_matches?(known_failure, observed_class, observed_message)
+      expected_class = known_failure.fetch("error_class").to_s
+      expected_message = known_failure.fetch("message").to_s
 
       class_matches = expected_class.empty? || observed_class == expected_class || observed_message.include?(expected_class)
       message_matches = expected_message.empty? || observed_message.include?(expected_message)

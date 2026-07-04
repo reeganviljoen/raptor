@@ -43,7 +43,7 @@ Each offline fixture manifest must declare enough structure for the runner to cl
 - `requires.gems`: gem requirements the harness must satisfy before booting the fixture.
 - `covers`: failure-taxonomy categories exercised by the fixture.
 - `workers`: worker counts to run, usually `1` and `2` for Ractor comparison.
-- `known_failures`: documented expected failures with `id`, `phase`, `category`, `error_class`, and `message`.
+- `known_failures`: documented expected failures with `id`, `phase`, `category`, `error_class`, and an observed error-message substring in `message`.
 - `probes`: request/expectation pairs with `name`, `category`, `request`, optional `known_failure`, and `expect`.
 - `notes`: optional human-readable research context.
 

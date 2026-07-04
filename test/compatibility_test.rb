@@ -12,8 +12,7 @@ class CompatibilityTest < Minitest::Test
       RaptorCompatibility::Runner.new(fixture, self).run
     end
 
-    assert results.any? { |result| result.status == "passed" }
-    assert results.any?(&:expected_known_failure?)
+    refute_empty results
 
     results.each do |result|
       result_hash = result.to_h
@@ -137,6 +136,51 @@ class CompatibilityTest < Minitest::Test
 
     assert_equal "request_failure", unexpected_result.status
     assert_equal "socket_closed", unexpected_result.known_failure_id
+  end
+
+  def test_response_known_failures_match_response_metadata
+    failure = {
+      "id" => "lowlevel_error",
+      "phase" => "request",
+      "category" => "ractor_runtime",
+      "error_class" => "RuntimeError",
+      "message" => "known boom"
+    }
+    fixture = Struct.new(:name, :known_failures).new("response_fixture", [failure])
+    runner = RaptorCompatibility::Runner.new(fixture, self)
+    probe = {
+      "name" => "lowlevel_response",
+      "category" => "rack_env",
+      "known_failure" => "lowlevel_error",
+      "request" => { "path" => "/" },
+      "expect" => { "status" => 500 }
+    }
+
+    runner.define_singleton_method(:request_probe) do |_probe, _port|
+      RaptorCompatibility::Runner::Response.new(
+        raw: "HTTP/1.1 500\r\n\r\nRuntimeError: known boom",
+        status: 500,
+        headers: {},
+        body: "RuntimeError: known boom"
+      )
+    end
+    expected_result = runner.send(:run_probe, probe, 9292, 1)
+
+    assert_equal "expected_known_failure", expected_result.status
+    assert_equal "lowlevel_error", expected_result.known_failure_id
+
+    runner.define_singleton_method(:request_probe) do |_probe, _port|
+      RaptorCompatibility::Runner::Response.new(
+        raw: "HTTP/1.1 500\r\n\r\nRuntimeError: different boom",
+        status: 500,
+        headers: {},
+        body: "RuntimeError: different boom"
+      )
+    end
+    mismatch_result = runner.send(:run_probe, probe, 9292, 1)
+
+    assert_equal "assertion_failure", mismatch_result.status
+    assert_equal "RaptorCompatibility::KnownFailureMismatch", mismatch_result.error_class
   end
 
   def test_boot_known_failures_match_manifest_phase_and_error_metadata
