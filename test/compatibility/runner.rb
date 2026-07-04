@@ -2,12 +2,23 @@
 
 require_relative "../test_helper"
 require_relative "fixture"
+require_relative "result"
 
 module RaptorCompatibility
   class Runner
     include RaptorTestHelpers
 
-    Response = Struct.new(:raw, :status, :headers, :body, keyword_init: true)
+    Response = Struct.new(:raw, :status, :headers, :body, keyword_init: true) do
+      def to_h
+        {
+          status: status,
+          headers: headers,
+          body: body,
+          raw: raw
+        }
+      end
+    end
+
     LOWLEVEL_ERROR_HANDLER = Ractor.shareable_proc do |error|
       body = "#{error.class}: #{error.message}"
       [500, { "content-type" => "text/plain" }, [body]]
@@ -21,26 +32,105 @@ module RaptorCompatibility
     end
 
     def run
-      fixture.workers.each do |workers|
-        config = Raptor.config(
-          rackup: fixture.rackup_path,
-          binds: [local_bind],
-          workers: workers,
-          max_workers: [workers, 2].max,
-          quiet: true,
-          lowlevel_error_handler: LOWLEVEL_ERROR_HANDLER
-        )
-
-        with_server(config) do |server|
-          fixture.probes.each do |probe|
-            response = request_probe(probe, server.listeners.first.port)
-            assert_probe(probe, response, workers)
-          end
+      results = missing_requirement_results
+      if results.empty?
+        fixture.workers.each do |workers|
+          results.concat(run_worker_count(workers))
         end
       end
+
+      assert_results(results)
+      results
     end
 
     private
+
+    def run_worker_count(workers)
+      server = nil
+      config = Raptor.config(
+        rackup: fixture.rackup_path,
+        binds: [local_bind],
+        workers: workers,
+        max_workers: [workers, 2].max,
+        quiet: true,
+        lowlevel_error_handler: LOWLEVEL_ERROR_HANDLER
+      )
+
+      server = Raptor::Server.new(config)
+      server.start
+
+      fixture.probes.map do |probe|
+        run_probe(probe, server.listeners.first.port, workers)
+      end
+    rescue StandardError => error
+      [startup_failure_result(workers, error)]
+    ensure
+      server&.stop
+    end
+
+    def run_probe(probe, port, workers)
+      response = request_probe(probe, port)
+      assert_probe(probe, response, workers)
+      known_failure = known_failure_for(probe)
+
+      if known_failure
+        if known_failure_matches?(known_failure, "request", response: response)
+          return Result.new(
+            fixture: fixture.name,
+            worker_count: workers,
+            probe_name: probe.fetch("name"),
+            phase: "request",
+            status: "expected_known_failure",
+            category: known_failure.fetch("category"),
+            known_failure_id: known_failure.fetch("id"),
+            response: response
+          )
+        end
+
+        return known_failure_mismatch_result(probe, response, workers, known_failure)
+      end
+
+      Result.new(
+        fixture: fixture.name,
+        worker_count: workers,
+        probe_name: probe.fetch("name"),
+        phase: "request",
+        status: "passed",
+        category: probe.fetch("category"),
+        response: response
+      )
+    rescue Minitest::Assertion => error
+      known_failure = known_failure_for(probe)
+      expected_failure = known_failure_matches?(known_failure, "assertion", error: error, response: response)
+
+      Result.new(
+        fixture: fixture.name,
+        worker_count: workers,
+        probe_name: probe.fetch("name"),
+        phase: "assertion",
+        status: expected_failure ? "expected_known_failure" : "assertion_failure",
+        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
+        known_failure_id: probe["known_failure"],
+        error_class: error.class.name,
+        message: error.message,
+        response: response
+      )
+    rescue StandardError => error
+      known_failure = known_failure_for(probe)
+      expected_failure = known_failure_matches?(known_failure, "request", error: error)
+
+      Result.new(
+        fixture: fixture.name,
+        worker_count: workers,
+        probe_name: probe.fetch("name"),
+        phase: "request",
+        status: expected_failure ? "expected_known_failure" : "request_failure",
+        category: expected_failure ? known_failure.fetch("category") : probe.fetch("category"),
+        known_failure_id: probe["known_failure"],
+        error_class: error.class.name,
+        message: error.message
+      )
+    end
 
     def request_probe(probe, port)
       request = probe.fetch("request")
@@ -124,6 +214,137 @@ module RaptorCompatibility
       failure_id = probe.fetch("known_failure")
       known_failure = fixture.known_failures.find { |failure| failure.fetch("id") == failure_id }
       test_case.assert known_failure, "#{label} known_failure=#{failure_id} must be documented in manifest"
+    end
+
+    def assert_results(results)
+      results.each do |result|
+        next if result.success?
+
+        message = [result.label, result.status, result.error_class, result.message].compact.join(": ")
+        test_case.flunk(message)
+      end
+    end
+
+    def startup_failure_result(workers, error)
+      if harness_environment_error?(error)
+        Result.new(
+          fixture: fixture.name,
+          worker_count: workers,
+          phase: "harness_environment",
+          status: "harness_environment_skip",
+          category: "harness_environment",
+          error_class: error.class.name,
+          message: error.message
+        )
+      else
+        known_failure = known_failure_for_phase("boot", error)
+        expected_failure = known_failure_matches?(known_failure, "boot", error: error)
+
+        Result.new(
+          fixture: fixture.name,
+          worker_count: workers,
+          phase: "boot",
+          status: expected_failure ? "expected_known_failure" : "boot_failure",
+          category: expected_failure ? known_failure.fetch("category") : "ractor_boot",
+          known_failure_id: expected_failure ? known_failure.fetch("id") : nil,
+          error_class: error.class.name,
+          message: error.message
+        )
+      end
+    end
+
+    def known_failure_mismatch_result(probe, response, workers, known_failure)
+      Result.new(
+        fixture: fixture.name,
+        worker_count: workers,
+        probe_name: probe.fetch("name"),
+        phase: "assertion",
+        status: "assertion_failure",
+        category: known_failure.fetch("category"),
+        known_failure_id: known_failure.fetch("id"),
+        error_class: "RaptorCompatibility::KnownFailureMismatch",
+        message: "known_failure=#{known_failure.fetch("id")} did not match response metadata",
+        response: response
+      )
+    end
+
+    def missing_requirement_results
+      missing = missing_requirements
+      return [] if missing.empty?
+
+      [
+        Result.new(
+          fixture: fixture.name,
+          phase: "harness_environment",
+          status: "harness_environment_skip",
+          category: "harness_environment",
+          error_class: "RaptorCompatibility::MissingRequirement",
+          message: "missing fixture requirements: #{missing.join(", ")}"
+        )
+      ]
+    end
+
+    def missing_requirements
+      fixture.required_gems.each_with_object([]) do |(gem_name, requirement), missing|
+        next if gem_requirement_satisfied?(gem_name, requirement)
+
+        missing << "#{gem_name} #{requirement}"
+      end
+    end
+
+    def gem_requirement_satisfied?(gem_name, requirement)
+      requirement = Gem::Requirement.new(requirement || ">= 0")
+      Gem::Specification.find_all_by_name(gem_name).any? do |spec|
+        requirement.satisfied_by?(spec.version)
+      end
+    end
+
+    def harness_environment_error?(error)
+      [Errno::EADDRINUSE, Errno::EACCES, Errno::EAFNOSUPPORT, Errno::EPERM].any? { |klass| error.is_a?(klass) }
+    end
+
+    def known_failure_for(probe)
+      failure_id = probe["known_failure"]
+      return nil unless failure_id
+
+      fixture.known_failures.find { |failure| failure.fetch("id") == failure_id }
+    end
+
+    def known_failure_for_phase(phase, error = nil)
+      fixture.known_failures.find do |failure|
+        known_failure_matches?(failure, phase, error: error)
+      end
+    end
+
+    def known_failure_matches?(known_failure, phase, error: nil, response: nil)
+      return false unless known_failure
+      return false unless known_failure.fetch("phase").to_s == phase
+      return known_failure_error_matches?(known_failure, error) if error
+      return known_failure_response_matches?(known_failure, response) if response
+
+      true
+    end
+
+    def known_failure_error_matches?(known_failure, error)
+      observed_class = error.class.name
+      observed_message = error.message.to_s
+
+      known_failure_metadata_matches?(known_failure, observed_class, observed_message)
+    end
+
+    def known_failure_response_matches?(known_failure, response)
+      observed_message = [response.body, response.raw].compact.join("\n")
+
+      known_failure_metadata_matches?(known_failure, nil, observed_message)
+    end
+
+    def known_failure_metadata_matches?(known_failure, observed_class, observed_message)
+      expected_class = known_failure.fetch("error_class").to_s
+      expected_message = known_failure.fetch("message").to_s
+
+      class_matches = expected_class.empty? || observed_class == expected_class || observed_message.include?(expected_class)
+      message_matches = expected_message.empty? || observed_message.include?(expected_message)
+      class_matches && message_matches
     end
   end
 end

@@ -17,7 +17,7 @@ known_failures:
     phase: request
     category: ractor_runtime
     error_class: Ractor::IsolationError
-    message: Rack::Lint accesses Rack::Utils::STATUS_WITH_NO_ENTITY_BODY, which is not shareable from a worker Ractor.
+    message: can not access non-shareable objects in constant Rack::Utils::STATUS_WITH_NO_ENTITY_BODY by non-main Ractor.
 notes: >
   Rack::Lint fixture. This currently records a known Ractor compatibility gap:
   Rack::Lint reaches Rack::Utils::STATUS_WITH_NO_ENTITY_BODY, which is not
