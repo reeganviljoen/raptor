@@ -43,7 +43,7 @@ bundle exec ruby bin/raptor-simulate --preset yjit
 The equivalent explicit spelling is:
 
 ```sh
-bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 5 --requests 2000 --warmup-requests 2000 --concurrency 8 --min-duration 5 --warmup-duration 2 --sample-interval 0.25
+bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 5 --requests 2000 --warmup-requests 2000 --concurrency 8 --min-duration 5 --warmup-duration 2 --sample-interval 0.25 --sample-count 20
 ```
 
 Artifacts are written under `tmp/simulations/<run-id>/` by default:
@@ -120,7 +120,7 @@ Each measured case records:
 
 - Client totals: attempted requests, completed requests, status counts, errors, bytes, elapsed seconds, and achieved requests per second.
 - Latency: p50, p75, p90, p95, p99, p99.9, max, mean, min, and coarse histogram buckets.
-- Server process samples: total RSS, peak RSS, ending RSS, average CPU percent, and per-PID process rows where `ps` is available.
+- Server process samples: total RSS, peak RSS, ending RSS, average CPU percent, and per-PID process rows where `ps` is available. Measured RSS/CPU samples are normalized to a fixed target count per case so longer cases do not automatically receive more process observations than shorter cases.
 - Ruby metrics: `/__metrics__` before and after the measured run, plus deltas for GC count, minor/major GC count, allocated/freed objects, heap slots, and malloc counters when Ruby exposes them. Deltas are flattened only when before/after probes hit the same worker. Puma cluster runs keep the raw sampled metrics but leave aggregate GC deltas blank until per-worker aggregation exists.
 
 Warmup requests run before measurement and are discarded. `--warmup-duration` keeps sending warmup requests until the configured warmup seconds have elapsed, even if the warmup request floor has already been reached. `--min-duration` does the same for measured requests, so the configured request count is a floor rather than a cap.

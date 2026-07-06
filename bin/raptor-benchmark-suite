@@ -22,7 +22,8 @@ module Raptor
         requests: 200,
         warmup_requests: 100,
         min_duration_s: 5.0,
-        warmup_duration_s: 2.0
+        warmup_duration_s: 2.0,
+        sample_count: Runner::DEFAULT_SAMPLE_COUNT
       }.freeze
       SUITES = {
         "smoke" => {
@@ -34,6 +35,7 @@ module Raptor
           concurrency: 2,
           repeats: 1,
           sample_interval: 0.25,
+          sample_count: Runner::DEFAULT_SAMPLE_COUNT,
           min_duration_s: 5.0,
           warmup_duration_s: 2.0
         },
@@ -46,6 +48,7 @@ module Raptor
           concurrency: 8,
           repeats: 3,
           sample_interval: 0.5,
+          sample_count: Runner::DEFAULT_SAMPLE_COUNT,
           min_duration_s: 5.0,
           warmup_duration_s: 2.0
         },
@@ -58,6 +61,7 @@ module Raptor
           concurrency: 8,
           repeats: 5,
           sample_interval: 0.5,
+          sample_count: Runner::DEFAULT_SAMPLE_COUNT,
           min_duration_s: 15.0,
           warmup_duration_s: 5.0
         }
@@ -100,6 +104,7 @@ module Raptor
             repeats: settings.fetch(:repeats),
             output_root: @options.fetch(:output),
             sample_interval: settings.fetch(:sample_interval),
+            sample_count: settings.fetch(:sample_count),
             min_duration_s: settings.fetch(:min_duration_s),
             warmup_duration_s: settings.fetch(:warmup_duration_s)
           ).run
@@ -131,6 +136,7 @@ module Raptor
           opts.on("--concurrency COUNT", Integer, "Override client concurrency") { |value| set_option(:concurrency, value) }
           opts.on("--repeat COUNT", Integer, "Override repeats per case") { |value| set_option(:repeats, value) }
           opts.on("--sample-interval SECONDS", Float, "Override RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--sample-count COUNT", Integer, "Override target measured RSS/CPU samples per case") { |value| set_option(:sample_count, value) }
           opts.on("--min-duration SECONDS", Float, "Minimum measured seconds per case") { |value| set_option(:min_duration_s, value) }
           opts.on("--warmup-duration SECONDS", Float, "Minimum warmup seconds per case") { |value| set_option(:warmup_duration_s, value) }
           opts.on("--output DIR", "Benchmark output root") { |value| set_option(:output, value) }
@@ -175,7 +181,7 @@ module Raptor
       end
 
       def explicit_suite_overrides
-        %i[profile requests warmup_requests concurrency repeats sample_interval min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
+        %i[profile requests warmup_requests concurrency repeats sample_interval sample_count min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
           overrides[name] = @options[name] if @explicit[name]
         end
       end

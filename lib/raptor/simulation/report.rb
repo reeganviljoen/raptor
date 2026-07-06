@@ -41,6 +41,9 @@ module Raptor
         rss_mb_peak
         rss_mb_end
         cpu_pct_avg
+        target_sample_count
+        sample_count
+        raw_sample_count
         gc_delta_scope
         gc_count_delta
         total_allocated_objects_delta
@@ -99,8 +102,8 @@ module Raptor
         lines << ""
         lines << "## Summary"
         lines << ""
-        lines << "| runtime | scenario | source | server | capacity | duration s | warmup s | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
-        lines << "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        lines << "| runtime | scenario | source | server | capacity | duration s | warmup s | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB | samples |"
+        lines << "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
 
         rows.each do |row|
           lines << [
@@ -117,7 +120,8 @@ module Raptor
             row.fetch("p50_ms"),
             row.fetch("p95_ms"),
             row.fetch("p99_ms"),
-            row.fetch("rss_mb_peak")
+            row.fetch("rss_mb_peak"),
+            row["sample_count"]
           ].join(" | ").then { |body| "| #{body} |" }
         end
 
@@ -193,6 +197,8 @@ module Raptor
           "Warmup requests" => metadata["warmup_requests"],
           "Minimum measured duration" => metadata["min_duration_s"],
           "Minimum warmup duration" => metadata["warmup_duration_s"],
+          "RSS/CPU sample target" => metadata["sample_count"],
+          "RSS/CPU sample interval max" => metadata["sample_interval_s"],
           "Concurrency" => metadata["concurrency"],
           "Repeats" => metadata["repeats"],
           "Keep alive" => metadata["keep_alive"],
@@ -358,7 +364,7 @@ module Raptor
 
       def raw_rows_table(rows)
         table(
-          ["Runtime", "YJIT", "Scenario", "Family", "Source", "Server", "Capacity", "Adapter", "Requests", "Target", "Duration s", "Warmup s", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
+          ["Runtime", "YJIT", "Scenario", "Family", "Source", "Server", "Capacity", "Adapter", "Requests", "Target", "Duration s", "Warmup s", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "Samples", "GC scope"],
           rows.sort_by { |row| [row["runtime"].to_s, row["scenario"].to_s, row["server"].to_s] }.map do |row|
             [
               row["runtime"],
@@ -382,6 +388,7 @@ module Raptor
               format_number(row["p999_ms"]),
               format_number(row["rss_mb_peak"]),
               format_number(row["cpu_pct_avg"]),
+              row["sample_count"],
               row["gc_delta_scope"]
             ]
           end
@@ -393,7 +400,7 @@ module Raptor
 
         grouped = samples.group_by { |sample| [sample["runtime"] || "default", sample["scenario"], sample["server"]] }
         table(
-          ["Runtime", "Scenario", "Server", "Samples", "Peak RSS MB", "Last RSS MB"],
+          ["Runtime", "Scenario", "Server", "Samples", "Target", "Peak RSS MB", "Last RSS MB"],
           grouped.map do |(runtime, scenario, server), group|
             available = group.select { |sample| sample["available"] }
             rss_values = available.map { |sample| numeric(sample["rss_kb_total"]) }.compact
@@ -402,6 +409,7 @@ module Raptor
               scenario,
               server,
               available.length,
+              group.first["target_sample_count"],
               rss_values.empty? ? "n/a" : format_number(rss_values.max / 1024.0),
               rss_values.empty? ? "n/a" : format_number(rss_values.last / 1024.0)
             ]

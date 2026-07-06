@@ -231,12 +231,13 @@ module Raptor
             metadata["warmup_requests"],
             Report.format_number(metadata["min_duration_s"]),
             Report.format_number(metadata["warmup_duration_s"]),
+            metadata["sample_count"],
             Array(metadata["scenarios"]).join(", "),
             link("report", "#{href_prefix}#{entry.fetch("report_href")}")
           ]
         end
 
-        table(["Created", "Suite", "Axis", "Arch", "OS", "Ruby", "Requests", "Warmup", "Min duration", "Warmup duration", "Scenarios", "Report"], rows)
+        table(["Created", "Suite", "Axis", "Arch", "OS", "Ruby", "Requests", "Warmup", "Min duration", "Warmup duration", "Samples", "Scenarios", "Report"], rows)
       end
 
       def medians_table(entries, href_prefix: "")

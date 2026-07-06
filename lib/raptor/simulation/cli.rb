@@ -15,6 +15,7 @@ module Raptor
         warmup_requests: 2_000,
         repeats: 5,
         sample_interval: 0.25,
+        sample_count: Runner::DEFAULT_SAMPLE_COUNT,
         min_duration_s: 5.0,
         warmup_duration_s: 2.0
       }.freeze
@@ -37,6 +38,7 @@ module Raptor
           keep_alive: true,
           timeout: 5,
           sample_interval: 0.5,
+          sample_count: Runner::DEFAULT_SAMPLE_COUNT,
           min_duration_s: 0.0,
           warmup_duration_s: 0.0,
           preset: nil,
@@ -70,6 +72,7 @@ module Raptor
           keep_alive: @options[:keep_alive],
           timeout: @options[:timeout],
           sample_interval: @options[:sample_interval],
+          sample_count: @options[:sample_count],
           min_duration_s: @options[:min_duration_s],
           warmup_duration_s: @options[:warmup_duration_s]
         ).run
@@ -108,6 +111,7 @@ module Raptor
           opts.on("--output DIR", "Output directory root") { |value| set_option(:output, value) }
           opts.on("--timeout SECONDS", Float, "HTTP open/read timeout") { |value| set_option(:timeout, value) }
           opts.on("--sample-interval SECONDS", Float, "RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--sample-count COUNT", Integer, "Target measured RSS/CPU samples per case") { |value| set_option(:sample_count, value) }
           opts.on("--min-duration SECONDS", Float, "Minimum measured seconds per case") { |value| set_option(:min_duration_s, value) }
           opts.on("--warmup-duration SECONDS", Float, "Minimum warmup seconds per case") { |value| set_option(:warmup_duration_s, value) }
           opts.on("--[no-]keep-alive", "Reuse HTTP connections inside each client thread") { |value| set_option(:keep_alive, value) }

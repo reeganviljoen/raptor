@@ -77,6 +77,14 @@ class SimulationTest < Minitest::Test
     assert_equal 2.5, rows.fetch(2).fetch("cpu_pct")
   end
 
+  def test_memory_sampler_normalizes_to_evenly_spaced_target_count
+    samples = (0...10).map { |index| { "time" => "sample-#{index}", "available" => true } }
+
+    normalized = Raptor::Simulation::MemorySampler.normalize_samples(samples, 4)
+
+    assert_equal %w[sample-0 sample-3 sample-6 sample-9], normalized.map { |sample| sample.fetch("time") }
+  end
+
   def test_quick_profile_has_one_raptor_and_one_puma_profile
     profiles = Raptor::Simulation::Configuration.profile("quick")
     cpu_count = [Etc.nprocessors, 1].max
@@ -159,6 +167,7 @@ class SimulationTest < Minitest::Test
     assert_equal 2_000, options[:warmup_requests]
     assert_equal 5, options[:repeats]
     assert_equal 0.25, options[:sample_interval]
+    assert_equal 20, options[:sample_count]
     assert_equal 5.0, options[:min_duration_s]
     assert_equal 2.0, options[:warmup_duration_s]
   end
@@ -171,6 +180,7 @@ class SimulationTest < Minitest::Test
         --warmup-requests 0
         --min-duration 0
         --warmup-duration 0
+        --sample-count 1
       ]
     )
 
@@ -181,6 +191,7 @@ class SimulationTest < Minitest::Test
     assert_equal 2_000, settings.fetch(:warmup_requests)
     assert_equal 15.0, settings.fetch(:min_duration_s)
     assert_equal 5.0, settings.fetch(:warmup_duration_s)
+    assert_equal 20, settings.fetch(:sample_count)
   end
 
   def test_benchmark_suite_keeps_quality_overrides_that_raise_floors
@@ -191,6 +202,7 @@ class SimulationTest < Minitest::Test
         --warmup-requests 150
         --min-duration 6
         --warmup-duration 3
+        --sample-count 30
       ]
     )
 
@@ -201,6 +213,7 @@ class SimulationTest < Minitest::Test
     assert_equal 150, settings.fetch(:warmup_requests)
     assert_equal 6.0, settings.fetch(:min_duration_s)
     assert_equal 3.0, settings.fetch(:warmup_duration_s)
+    assert_equal 30, settings.fetch(:sample_count)
   end
 
   def test_workload_rackup_contains_required_probe_endpoints
@@ -240,6 +253,21 @@ class SimulationTest < Minitest::Test
     assert_equal 1, runner.send(:case_concurrency, profile, serial_scenario)
     assert_equal 10, runner.send(:case_requests, profile, serial_scenario)
     assert_equal 10, runner.send(:case_warmup_requests, profile, serial_scenario)
+  end
+
+  def test_runner_oversamples_process_snapshots_before_normalizing
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [],
+      scenarios: [],
+      requests: 1,
+      concurrency: 1,
+      warmup_requests: 0,
+      sample_interval: 0.25,
+      sample_count: 20,
+      min_duration_s: 5.0
+    )
+
+    assert_equal 0.0625, runner.send(:effective_sample_interval)
   end
 
   def test_runner_summary_records_matched_capacity_and_scaled_load
@@ -283,6 +311,9 @@ class SimulationTest < Minitest::Test
     assert_equal [120, 120], summaries.map { |row| row.fetch("warmup_requests") }
     assert_equal [100, 100], summaries.map { |row| row.fetch("target_warmup_requests") }
     assert_equal [2.0, 2.0], summaries.map { |row| row.fetch("warmup_min_duration_s") }
+    assert_equal [20, 20], summaries.map { |row| row.fetch("target_sample_count") }
+    assert_equal [20, 20], summaries.map { |row| row.fetch("sample_count") }
+    assert_equal [24, 24], summaries.map { |row| row.fetch("raw_sample_count") }
     assert_equal ["puma/benchmarks/local/long_tail_hey + test/rackup/sleep_fibonacci"], summaries.map { |row| row.fetch("benchmark_source") }.uniq
   end
 
@@ -382,6 +413,8 @@ class SimulationTest < Minitest::Test
       "platform" => RUBY_PLATFORM,
       "requests" => 10,
       "warmup_requests" => 2,
+      "sample_count" => 20,
+      "sample_interval_s" => 0.25,
       "concurrency" => 2,
       "repeats" => 1,
       "keep_alive" => true,
@@ -421,6 +454,7 @@ class SimulationTest < Minitest::Test
       assert_includes html, "Benchmark Quality Warnings"
       assert_includes html, "short_yjit_warmup"
       assert_includes html, "Benchmark Source Coverage"
+      assert_includes html, "RSS/CPU sample target"
     end
   end
 
@@ -450,6 +484,8 @@ class SimulationTest < Minitest::Test
         "warmup_requests" => 2,
         "min_duration_s" => 5.0,
         "warmup_duration_s" => 2.0,
+        "sample_count" => 20,
+        "sample_interval_s" => 0.25,
         "concurrency" => 2,
         "repeats" => 1,
         "keep_alive" => true,
@@ -476,6 +512,7 @@ class SimulationTest < Minitest::Test
       assert_includes index, "arm64-all-runtimes"
       assert_includes index, "Min duration"
       assert_includes index, "Warmup duration"
+      assert_includes index, "Samples"
       assert_includes index, "architectures/arm64/index.html"
       assert_includes architecture, "Architecture benchmark report"
       assert_includes architecture, "arm64 Test Benchmarks"
@@ -526,6 +563,9 @@ class SimulationTest < Minitest::Test
       "rss_mb_peak" => rss,
       "rss_mb_end" => rss,
       "cpu_pct_avg" => 10.0,
+      "target_sample_count" => 20,
+      "sample_count" => 20,
+      "raw_sample_count" => 24,
       "gc_delta_scope" => "same_worker",
       "gc_count_delta" => 1,
       "total_allocated_objects_delta" => 100
@@ -590,7 +630,10 @@ class SimulationTest < Minitest::Test
     {
       "rss_mb_peak" => 30.0,
       "rss_mb_end" => 29.0,
-      "cpu_pct_avg" => 12.0
+      "cpu_pct_avg" => 12.0,
+      "target_sample_count" => 20,
+      "sample_count" => 20,
+      "raw_sample_count" => 24
     }
   end
 

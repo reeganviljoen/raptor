@@ -24,13 +24,17 @@ module Raptor
       MIN_YJIT_DURATION_S = 5.0
       MIN_YJIT_WARMUP_DURATION_S = 2.0
       MIN_BENCHMARK_REPEATS = 3
+      DEFAULT_SAMPLE_COUNT = 20
+      MIN_SAMPLE_INTERVAL_S = 0.01
+      SAMPLE_OVERSAMPLE_FACTOR = 4.0
 
       attr_reader :profiles, :runtime_profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
-                  :output_root, :keep_alive, :timeout, :sample_interval, :min_duration_s, :warmup_duration_s
+                  :output_root, :keep_alive, :timeout, :sample_interval, :sample_count, :min_duration_s,
+                  :warmup_duration_s
 
       def initialize(profiles:, scenarios:, requests:, concurrency:, warmup_requests:, runtime_profiles: nil, repeats: 1,
                      output_root: "tmp/simulations", keep_alive: true, timeout: 5, sample_interval: 0.5,
-                     min_duration_s: 0, warmup_duration_s: 0)
+                     sample_count: DEFAULT_SAMPLE_COUNT, min_duration_s: 0, warmup_duration_s: 0)
         @profiles = profiles
         @runtime_profiles = runtime_profiles || [Configuration.runtime("default")]
         @scenarios = scenarios
@@ -41,7 +45,8 @@ module Raptor
         @output_root = output_root
         @keep_alive = keep_alive
         @timeout = timeout
-        @sample_interval = sample_interval
+        @sample_interval = [Float(sample_interval), MIN_SAMPLE_INTERVAL_S].max
+        @sample_count = sample_count.nil? ? nil : [Integer(sample_count), 1].max
         @min_duration_s = [Float(min_duration_s), 0.0].max
         @warmup_duration_s = [Float(warmup_duration_s), 0.0].max
       end
@@ -106,13 +111,21 @@ module Raptor
         warmup_result = warmup(server, scenario)
 
         before_metrics = fetch_metrics(server)
-        sampler = MemorySampler.new(server.pid, interval: sample_interval)
+        sampler = MemorySampler.new(server.pid, interval: effective_sample_interval, target_count: sample_count)
         sampler.start
         measurement = measured_load(server, scenario)
         sampler.stop
 
         after_metrics = fetch_metrics(server)
-        samples = sampler.samples.map { |sample| sample.merge("run_id" => case_id, "runtime" => runtime_profile.label, "scenario" => scenario.name, "server" => profile.label) }
+        samples = sampler.samples.map do |sample|
+          sample.merge(
+            "run_id" => case_id,
+            "runtime" => runtime_profile.label,
+            "scenario" => scenario.name,
+            "server" => profile.label,
+            "target_sample_count" => sample_count
+          )
+        end
         summary = summarize(case_id, runtime_profile, profile, scenario, measurement, warmup_result, sampler.summary, before_metrics, after_metrics)
         FileUtils.mkdir_p(case_dir)
         Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement, "warmup" => warmup_result))
@@ -192,6 +205,9 @@ module Raptor
           "rss_mb_peak" => memory["rss_mb_peak"],
           "rss_mb_end" => memory["rss_mb_end"],
           "cpu_pct_avg" => memory["cpu_pct_avg"],
+          "target_sample_count" => sample_count,
+          "sample_count" => memory["sample_count"],
+          "raw_sample_count" => memory["raw_sample_count"],
           "gc_count_delta" => gc_delta["gc_count"],
           "total_allocated_objects_delta" => gc_delta["total_allocated_objects"],
           "status_counts" => measurement.fetch("status_counts"),
@@ -249,6 +265,16 @@ module Raptor
 
       def server_capacity(profile)
         profile.capacity
+      end
+
+      def effective_sample_interval
+        interval = sample_interval
+        if sample_count && sample_count > 1 && min_duration_s.positive?
+          target_interval = min_duration_s / (sample_count * SAMPLE_OVERSAMPLE_FACTOR)
+          interval = [interval, target_interval].min
+        end
+
+        [interval, MIN_SAMPLE_INTERVAL_S].max
       end
 
       def fetch_metrics(server)
@@ -337,6 +363,8 @@ module Raptor
           "warmup_requests" => warmup_requests,
           "min_duration_s" => min_duration_s,
           "warmup_duration_s" => warmup_duration_s,
+          "sample_interval_s" => sample_interval,
+          "sample_count" => sample_count,
           "repeats" => repeats,
           "keep_alive" => keep_alive,
           "quality_warnings" => quality_warnings,
