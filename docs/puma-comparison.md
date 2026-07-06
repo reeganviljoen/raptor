@@ -38,7 +38,7 @@ Status labels:
 | `queue_requests`, `enable_keep_alives`, `clean_thread_locals`, `fiber_per_request` | Stored but not wired into request handling. | Config-only | P1 |
 | `stdout_redirect`, `custom_logger`, `log_formatter` | Redirect warns; logger/formatter are no-op compatibility methods. | Warn-noop | P2 |
 | CLI/config discovery | Small Puma-like CLI and config loading path, including `config/puma.rb`. | Supported-subset | P2 |
-| Raptor compatibility fixtures | Raptor-only fixture harness exists under `test/compatibility`. No paired Puma-vs-Raptor harness yet. | Raptor-only | P1 |
+| Raptor compatibility fixtures | Raptor-only fixture harness exists under `test/compatibility`. A local Puma-vs-Raptor simulation harness exists for measured comparison runs. | Raptor-only | P1 |
 
 ## Intentionally Different
 

@@ -47,4 +47,29 @@ class SimulationTest < Minitest::Test
       assert_includes source, "/upload"
     end
   end
+
+  def test_puma_cluster_gc_delta_is_not_flattened_as_whole_server_metric
+    profile = Raptor::Simulation::ServerProfile.new(name: "cluster", adapter: "puma", workers: 2, threads: 1)
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [profile],
+      scenarios: [],
+      requests: 1,
+      concurrency: 1,
+      warmup_requests: 0
+    )
+
+    scope = runner.send(:gc_delta_scope, profile, { "pid" => 10 }, { "pid" => 10 })
+    delta = runner.send(:empty_gc_delta)
+
+    assert_equal "multiprocess_sample_only", scope
+    assert_nil delta.fetch("gc_count")
+    assert_nil delta.fetch("total_allocated_objects")
+  end
+
+  def test_simulation_command_is_not_packaged_without_puma_runtime_dependency
+    spec = Gem::Specification.load(File.expand_path("../raptor.gemspec", __dir__))
+
+    assert_includes spec.executables, "raptor"
+    refute_includes spec.executables, "raptor-simulate"
+  end
 end

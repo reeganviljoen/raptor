@@ -27,6 +27,7 @@ module Raptor
         rss_mb_peak
         rss_mb_end
         cpu_pct_avg
+        gc_delta_scope
         gc_count_delta
         total_allocated_objects_delta
       ].freeze
@@ -90,6 +91,7 @@ module Raptor
         lines << "- This harness uses a built-in Ruby HTTP client, so it is a practical local simulation rather than a replacement for wrk/wrk2."
         lines << "- Latency is closed-loop request latency. Use a constant-rate load tool before making production tail-latency claims."
         lines << "- RSS sampling depends on `ps`; sandboxed environments may mark memory metrics unavailable."
+        lines << "- GC deltas are reported only when before/after probes hit the same worker. Puma cluster rows keep raw sampled metrics but leave aggregate GC deltas blank until per-worker aggregation exists."
         lines << "- Compare absolute values first. Percent deltas are only meaningful with the raw latency, throughput, CPU, RSS, and GC numbers beside them."
 
         File.write(path, "#{lines.join("\n")}\n")

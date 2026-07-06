@@ -128,7 +128,8 @@ module Raptor
 
       def summarize(case_id, profile, scenario, measurement, memory, before_metrics, after_metrics)
         latency = measurement.fetch("latency_ms")
-        gc_delta = gc_delta(before_metrics, after_metrics)
+        gc_scope = gc_delta_scope(profile, before_metrics, after_metrics)
+        gc_delta = gc_scope == "same_worker" ? gc_delta(before_metrics, after_metrics) : empty_gc_delta
         error_count = measurement.fetch("errors").values.sum
 
         {
@@ -157,7 +158,10 @@ module Raptor
           "status_counts" => measurement.fetch("status_counts"),
           "measurement" => measurement,
           "memory" => memory,
-          "gc_delta" => gc_delta
+          "gc_delta" => gc_delta,
+          "gc_delta_scope" => gc_scope,
+          "gc_metrics_before" => before_metrics,
+          "gc_metrics_after" => after_metrics
         }
       end
 
@@ -190,6 +194,29 @@ module Raptor
           after_value = after_gc[key] || after_gc[key.to_sym]
           deltas[key] = after_value && before_value ? after_value - before_value : nil
         end.merge("gc_count" => gc_count_delta(before_metrics, after_metrics))
+      end
+
+      def empty_gc_delta
+        {
+          "count" => nil,
+          "minor_gc_count" => nil,
+          "major_gc_count" => nil,
+          "total_allocated_objects" => nil,
+          "total_freed_objects" => nil,
+          "heap_live_slots" => nil,
+          "heap_free_slots" => nil,
+          "malloc_increase_bytes" => nil,
+          "oldmalloc_increase_bytes" => nil,
+          "gc_count" => nil
+        }
+      end
+
+      def gc_delta_scope(profile, before_metrics, after_metrics)
+        return "unavailable" if before_metrics["error"] || after_metrics["error"]
+        return "multiprocess_sample_only" if profile.adapter.to_s == "puma" && profile.workers.to_i.positive?
+        return "different_sampled_workers" if before_metrics["pid"] && after_metrics["pid"] && before_metrics["pid"] != after_metrics["pid"]
+
+        "same_worker"
       end
 
       def gc_count_delta(before_metrics, after_metrics)

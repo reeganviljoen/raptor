@@ -4,6 +4,8 @@ Raptor now includes a local simulation harness for comparing Puma and Raptor aga
 
 The harness follows the Speedshop measurement posture: record absolute latency, throughput, memory, and GC data first; keep warmup separate from measurement; and treat relative deltas as useful only when the raw context is present.
 
+`raptor-simulate` is a repository development command, not an installed gem executable. Puma remains a development dependency so the core `raptor` gem does not depend on Puma at runtime.
+
 ## Run It
 
 List the built-in profiles and scenarios:
@@ -73,7 +75,7 @@ Each measured case records:
 - Client totals: attempted requests, completed requests, status counts, errors, bytes, elapsed seconds, and achieved requests per second.
 - Latency: p50, p75, p90, p95, p99, p99.9, max, mean, min, and coarse histogram buckets.
 - Server process samples: total RSS, peak RSS, ending RSS, average CPU percent, and per-PID process rows where `ps` is available.
-- Ruby metrics: `/__metrics__` before and after the measured run, plus deltas for GC count, minor/major GC count, allocated/freed objects, heap slots, and malloc counters when Ruby exposes them.
+- Ruby metrics: `/__metrics__` before and after the measured run, plus deltas for GC count, minor/major GC count, allocated/freed objects, heap slots, and malloc counters when Ruby exposes them. Deltas are flattened only when before/after probes hit the same worker. Puma cluster runs keep the raw sampled metrics but leave aggregate GC deltas blank until per-worker aggregation exists.
 
 Warmup requests run before measurement and are discarded.
 
@@ -84,6 +86,8 @@ The built-in client is deliberately dependency-light and uses Ruby's `Net::HTTP`
 Short local runs should not be used to claim stable memory behavior. Speedshop's Ruby memory writing highlights allocator fragmentation and multi-threaded memory growth as long-running effects, so memory claims need soak runs with RSS curves.
 
 Disable noisy logging while measuring. Both Raptor and Puma are launched quiet by default because shared stdout/stderr can distort small benchmarks.
+
+Puma cluster GC metrics are intentionally conservative. A normal HTTP `/__metrics__` request can hit any worker process, so a before/after pair may not describe the same worker and never describes every worker. Use RSS/CPU process-tree samples for whole-server process behavior until explicit per-worker GC aggregation is added.
 
 ## References
 
