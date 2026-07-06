@@ -72,4 +72,70 @@ class SimulationTest < Minitest::Test
     assert_includes spec.executables, "raptor"
     refute_includes spec.executables, "raptor-simulate"
   end
+
+  def test_html_report_contains_tables_and_inline_graphs
+    metadata = {
+      "run_id" => "test-run",
+      "created_at" => "2026-07-06T00:00:00Z",
+      "git_sha" => "abc123",
+      "ruby" => RUBY_DESCRIPTION,
+      "raptor_version" => "0.1.0",
+      "puma_version" => "8.0.2",
+      "rack_version" => "3.2.6",
+      "cpu_count" => 8,
+      "platform" => RUBY_PLATFORM,
+      "requests" => 10,
+      "warmup_requests" => 2,
+      "concurrency" => 2,
+      "repeats" => 1,
+      "keep_alive" => true,
+      "scenarios" => ["tiny"]
+    }
+    rows = [
+      benchmark_row("tiny", "raptor-1r", "raptor", 1200.0, 1.2, 22.0),
+      benchmark_row("tiny", "puma-single-5t", "puma", 1400.0, 0.9, 30.0)
+    ]
+
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "report.html")
+      Raptor::Simulation::Report.write_html(path, metadata, rows, [])
+      html = File.read(path)
+
+      assert_includes html, "<table>"
+      assert_includes html, "<svg"
+      assert_includes html, "Puma vs Raptor Simulation"
+      assert_includes html, "raptor-1r"
+      assert_includes html, "puma-single-5t"
+    end
+  end
+
+  private
+
+  def benchmark_row(scenario, server, adapter, rps, p99, rss)
+    {
+      "run_id" => "#{scenario}/#{server}/repeat-1",
+      "scenario" => scenario,
+      "server" => server,
+      "adapter" => adapter,
+      "workers" => adapter == "raptor" ? 1 : 0,
+      "threads" => adapter == "puma" ? 5 : nil,
+      "requests" => 10,
+      "concurrency" => 2,
+      "keep_alive" => true,
+      "completed" => 10,
+      "errors" => 0,
+      "achieved_rps" => rps,
+      "p50_ms" => p99 / 2.0,
+      "p95_ms" => p99 * 0.8,
+      "p99_ms" => p99,
+      "p999_ms" => p99,
+      "max_ms" => p99,
+      "rss_mb_peak" => rss,
+      "rss_mb_end" => rss,
+      "cpu_pct_avg" => 10.0,
+      "gc_delta_scope" => "same_worker",
+      "gc_count_delta" => 1,
+      "total_allocated_objects_delta" => 100
+    }
+  end
 end

@@ -64,10 +64,12 @@ module Raptor
         Report.write_summary_csv(File.join(output_dir, "summary.csv"), summary_rows)
         Report.write_samples(File.join(output_dir, "samples.ndjson"), sample_rows)
         Report.write_markdown(File.join(output_dir, "report.md"), metadata, summary_rows)
+        Report.write_html(File.join(output_dir, "report.html"), metadata, summary_rows, sample_rows)
 
         {
           "run_id" => run_id,
           "output_dir" => output_dir,
+          "html_report" => File.join(output_dir, "report.html"),
           "metadata" => metadata,
           "summary" => summary_rows
         }

@@ -52,6 +52,7 @@ module Raptor
         ).run
 
         puts "wrote #{result.fetch("output_dir")}"
+        puts "html report: #{result.fetch("html_report")}"
         puts "summary:"
         result.fetch("summary").each do |row|
           puts format(

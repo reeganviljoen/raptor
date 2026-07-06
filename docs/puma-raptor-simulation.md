@@ -39,9 +39,12 @@ Artifacts are written under `tmp/simulations/<run-id>/` by default:
 - `summary.csv`: flat rows for spreadsheet and graphing tools.
 - `samples.ndjson`: RSS/CPU process-tree samples.
 - `report.md`: a human-readable summary table and caveats.
+- `report.html`: a self-contained offline report with comparison tables and inline SVG graphs.
 - `<scenario>/<server>/repeat-N/result.json`: per-case measurement detail.
 - `<scenario>/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs.
 - `config.ru`: the exact generated Rack workload used for both servers.
+
+Open `report.html` directly in a browser to inspect the offline tables and graphs.
 
 ## Profiles
 
