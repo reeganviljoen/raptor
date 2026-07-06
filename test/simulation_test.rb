@@ -7,6 +7,8 @@ require "socket"
 require "raptor/simulation"
 require "raptor/simulation/cli"
 
+load File.expand_path("../bin/raptor-benchmark-suite", __dir__)
+
 class SimulationTest < Minitest::Test
   def test_percentile_summary_interpolates_tail_values
     summary = Raptor::Simulation::Percentiles.summarize([1.0, 2.0, 3.0, 4.0])
@@ -159,6 +161,46 @@ class SimulationTest < Minitest::Test
     assert_equal 0.25, options[:sample_interval]
     assert_equal 5.0, options[:min_duration_s]
     assert_equal 2.0, options[:warmup_duration_s]
+  end
+
+  def test_benchmark_suite_enforces_quality_floors_after_overrides
+    cli = Raptor::Simulation::BenchmarkSuiteCLI.new(
+      %w[
+        --suite full
+        --requests 1
+        --warmup-requests 0
+        --min-duration 0
+        --warmup-duration 0
+      ]
+    )
+
+    cli.send(:parse!)
+    settings = cli.send(:suite_settings)
+
+    assert_equal 5_000, settings.fetch(:requests)
+    assert_equal 2_000, settings.fetch(:warmup_requests)
+    assert_equal 15.0, settings.fetch(:min_duration_s)
+    assert_equal 5.0, settings.fetch(:warmup_duration_s)
+  end
+
+  def test_benchmark_suite_keeps_quality_overrides_that_raise_floors
+    cli = Raptor::Simulation::BenchmarkSuiteCLI.new(
+      %w[
+        --suite smoke
+        --requests 300
+        --warmup-requests 150
+        --min-duration 6
+        --warmup-duration 3
+      ]
+    )
+
+    cli.send(:parse!)
+    settings = cli.send(:suite_settings)
+
+    assert_equal 300, settings.fetch(:requests)
+    assert_equal 150, settings.fetch(:warmup_requests)
+    assert_equal 6.0, settings.fetch(:min_duration_s)
+    assert_equal 3.0, settings.fetch(:warmup_duration_s)
   end
 
   def test_workload_rackup_contains_required_probe_endpoints
@@ -406,6 +448,8 @@ class SimulationTest < Minitest::Test
         "runner_label" => "local",
         "requests" => 10,
         "warmup_requests" => 2,
+        "min_duration_s" => 5.0,
+        "warmup_duration_s" => 2.0,
         "concurrency" => 2,
         "repeats" => 1,
         "keep_alive" => true,
@@ -430,6 +474,8 @@ class SimulationTest < Minitest::Test
       assert_equal 1, result.fetch("runs")
       assert_includes index, "Test Benchmarks"
       assert_includes index, "arm64-all-runtimes"
+      assert_includes index, "Min duration"
+      assert_includes index, "Warmup duration"
       assert_includes index, "architectures/arm64/index.html"
       assert_includes architecture, "Architecture benchmark report"
       assert_includes architecture, "arm64 Test Benchmarks"

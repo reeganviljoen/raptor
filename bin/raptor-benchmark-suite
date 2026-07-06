@@ -18,6 +18,12 @@ module Raptor
         puma-sleep-fibonacci-5ms
       ].freeze
       SCENARIOS = (PUMA_RESPONSE_SCENARIOS + PUMA_LONG_TAIL_SCENARIOS + PUMA_SLEEP_FIBONACCI_SCENARIOS).freeze
+      QUALITY_FLOORS = {
+        requests: 200,
+        warmup_requests: 100,
+        min_duration_s: 5.0,
+        warmup_duration_s: 2.0
+      }.freeze
       SUITES = {
         "smoke" => {
           profile: "quick",
@@ -160,7 +166,9 @@ module Raptor
           raise ArgumentError, "unknown benchmark suite #{@options.fetch(:suite).inspect}; choose one of #{SUITES.keys.join(", ")}"
         end
 
-        suite.merge(explicit_suite_overrides).merge(
+        settings = enforce_quality_floors(suite.merge(explicit_suite_overrides), suite)
+
+        settings.merge(
           runtimes: @options[:runtimes].empty? ? suite.fetch(:runtimes) : @options[:runtimes],
           scenarios: @options[:scenarios].empty? ? suite.fetch(:scenarios) : @options[:scenarios]
         )
@@ -169,6 +177,19 @@ module Raptor
       def explicit_suite_overrides
         %i[profile requests warmup_requests concurrency repeats sample_interval min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
           overrides[name] = @options[name] if @explicit[name]
+        end
+      end
+
+      def enforce_quality_floors(settings, floor_settings = QUALITY_FLOORS)
+        QUALITY_FLOORS.each_with_object(settings.dup) do |(name, global_floor), enforced|
+          current = enforced.fetch(name)
+          floor = floor_settings.fetch(name, global_floor)
+          enforced[name] =
+            if global_floor.is_a?(Integer)
+              [Integer(current), Integer(floor), global_floor].max
+            else
+              [Float(current), Float(floor), global_floor].max
+            end
         end
       end
 
@@ -207,4 +228,4 @@ module Raptor
   end
 end
 
-Raptor::Simulation::BenchmarkSuiteCLI.run
+Raptor::Simulation::BenchmarkSuiteCLI.run if $PROGRAM_NAME == __FILE__
