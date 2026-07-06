@@ -62,16 +62,14 @@ Open `report.html` directly in a browser to inspect the offline tables and graph
 
 ## Profiles
 
-`quick` starts one Raptor process with five Ractor workers and one single-process Puma server with five request threads. It is the default because it is fast enough for local iteration while keeping both adapters at the same request-slot capacity.
+`quick` starts a Rails-representative Puma cluster with one worker per logical CPU and three request threads per worker. Raptor is matched to the same total request-slot capacity with `3N` Ractors for `N` logical CPUs.
 
-`full` uses the logical CPU count `N`:
+`full` uses the same server shape and leaves the broader benchmark-suite settings, such as scenarios, repeats, warmup, and measured duration, to the selected suite:
 
-- Puma single-process with one thread, matched by Raptor with one Ractor.
-- Puma single-process with five threads, matched by Raptor with five Ractors.
-- Puma cluster with `N` workers and one thread, matched by Raptor with `N` Ractors.
-- Puma cluster with `N` workers and five threads, matched by Raptor with `5N` Ractors.
+- Puma with `N` workers and three threads per worker.
+- Raptor with `3N` Ractors.
 
-These modes describe equivalent request-slot capacity, not identical mechanics. Puma capacity is counted as `(workers > 0 ? workers : 1) * threads`; Raptor capacity is its Ractor count. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
+These modes describe equivalent request-slot capacity, not identical mechanics. Puma capacity is counted as `workers * threads`; Raptor capacity is its Ractor count. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
 
 ## Runtime Profiles
 

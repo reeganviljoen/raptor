@@ -37,7 +37,7 @@ The suite runner supports three presets. The benchmark suites now use Puma's own
 
 Measured request counts are floors, not caps. Fast cases keep issuing requests until the minimum measured duration is reached. Warmup uses the lower of the suite warmup request floor and the case's measured request floor, then keeps issuing warmup requests until the minimum warmup duration is reached. That keeps serial slow scenarios from spending minutes on warmup while still giving fast endpoints enough elapsed warmup time. Reports include the actual measured duration, actual request count, target request floor, warmup duration, and configured duration floors.
 
-All suite profiles are capacity-matched. Puma capacity is `(workers > 0 ? workers : 1) * threads`; Raptor capacity is its Ractor count. The `full` profile creates Raptor profiles for every Puma capacity shape, including single-thread, single-process five-thread, `N x 1`, and `N x 5` Puma shapes. Report medians are grouped by scenario, runtime, adapter, and capacity so Puma and Raptor rows with the same request-slot count can be read side by side.
+All suite profiles are capacity-matched. Puma uses a Rails-representative cluster shape: one worker per logical CPU and three request threads per worker. Puma capacity is `workers * threads`; Raptor capacity is its Ractor count. Both `quick` and `full` create a matching Raptor profile with `3N` Ractors for `N` logical CPUs, so Puma and Raptor rows with the same request-slot count can be read side by side.
 
 To run one axis locally, pass the runtime explicitly:
 

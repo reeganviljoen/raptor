@@ -77,21 +77,26 @@ class SimulationTest < Minitest::Test
 
   def test_quick_profile_has_one_raptor_and_one_puma_profile
     profiles = Raptor::Simulation::Configuration.profile("quick")
+    cpu_count = [Etc.nprocessors, 1].max
+    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
 
     assert_equal ["raptor", "puma"], profiles.map(&:adapter)
-    assert_equal "raptor-5r", profiles.first.label
-    assert_equal "puma-single-5t", profiles.last.label
-    assert_equal [5, 5], profiles.map(&:capacity)
+    assert_equal "raptor-#{capacity}r", profiles.first.label
+    assert_equal "puma-#{cpu_count}w-3t", profiles.last.label
+    assert_equal [capacity, capacity], profiles.map(&:capacity)
   end
 
-  def test_full_profile_has_matching_raptor_capacity_for_every_puma_shape
+  def test_full_profile_uses_rails_default_threads_and_matching_ractors
     profiles = Raptor::Simulation::Configuration.profile("full")
-    puma_capacities = profiles.select { |profile| profile.adapter == "puma" }.map(&:capacity)
-    raptor_capacities = profiles.select { |profile| profile.adapter == "raptor" }.map(&:capacity)
+    cpu_count = [Etc.nprocessors, 1].max
+    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
+    puma = profiles.find { |profile| profile.adapter == "puma" }
 
-    assert_equal puma_capacities.uniq.sort, raptor_capacities.sort
-    assert_includes profiles.map(&:label), "puma-single-1t"
-    assert_includes profiles.map(&:label), "puma-single-5t"
+    assert_equal 2, profiles.length
+    assert_equal ["raptor", "puma"], profiles.map(&:adapter)
+    assert_equal cpu_count, puma.workers
+    assert_equal 3, puma.threads
+    assert_equal [capacity, capacity], profiles.map(&:capacity)
   end
 
   def test_runtime_profiles_can_select_yjit_on_and_off

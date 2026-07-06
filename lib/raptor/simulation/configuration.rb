@@ -104,6 +104,7 @@ module Raptor
       PUMA_LONG_TAIL_REQUESTS_PER_CONNECTION = 20
       PUMA_SLEEP_FIBONACCI_DELAYS = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2].freeze
       PUMA_SLEEP_FIBONACCI_REPEATS = 10
+      RAILS_DEFAULT_THREADS = 3
 
       def scenarios
         legacy_scenarios
@@ -192,19 +193,16 @@ module Raptor
 
         case name.to_s
         when "quick"
-          matched_profiles([
-            ServerProfile.new(name: "puma-single-threads-5", adapter: "puma", workers: 0, threads: 5)
-          ])
+          matched_profiles([rails_puma_profile(cpu_count)])
         when "full"
-          matched_profiles([
-            ServerProfile.new(name: "puma-single-threads-1", adapter: "puma", workers: 0, threads: 1),
-            ServerProfile.new(name: "puma-single-threads-5", adapter: "puma", workers: 0, threads: 5),
-            ServerProfile.new(name: "puma-cluster-n-threads-1", adapter: "puma", workers: cpu_count, threads: 1),
-            ServerProfile.new(name: "puma-cluster-n-threads-5", adapter: "puma", workers: cpu_count, threads: 5)
-          ])
+          matched_profiles([rails_puma_profile(cpu_count)])
         else
           raise ArgumentError, "unknown simulation profile: #{name.inspect}"
         end
+      end
+
+      def rails_puma_profile(cpu_count)
+        ServerProfile.new(name: "puma-cluster-n-threads-#{RAILS_DEFAULT_THREADS}", adapter: "puma", workers: cpu_count, threads: RAILS_DEFAULT_THREADS)
       end
 
       def matched_profiles(puma_profiles)
