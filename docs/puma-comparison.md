@@ -38,7 +38,7 @@ Status labels:
 | `queue_requests`, `enable_keep_alives`, `clean_thread_locals`, `fiber_per_request` | Stored but not wired into request handling. | Config-only | P1 |
 | `stdout_redirect`, `custom_logger`, `log_formatter` | Redirect warns; logger/formatter are no-op compatibility methods. | Warn-noop | P2 |
 | CLI/config discovery | Small Puma-like CLI and config loading path, including `config/puma.rb`. | Supported-subset | P2 |
-| Raptor compatibility fixtures | Raptor-only fixture harness exists under `test/compatibility`. No paired Puma-vs-Raptor harness yet. | Raptor-only | P1 |
+| Raptor compatibility fixtures | Raptor-only fixture harness exists under `test/compatibility`. A local Puma-vs-Raptor simulation harness exists for measured comparison runs. | Raptor-only | P1 |
 
 ## Intentionally Different
 
@@ -57,16 +57,29 @@ Status labels:
 - Unsupported behavior is uneven by design: some methods raise, some warn, some store options, and some compatibility placeholders no-op.
 - Hook location and timing need clearer documentation. Some Puma hooks are process-worker hooks; Raptor currently runs comparable hooks in the master around Ractor lifecycle events.
 - HTTP behavior is still intentionally small compared with Puma's mature parser, buffering, TLS, streaming, and hijack support.
-- There is an initial Raptor-only compatibility fixture harness, but no repeatable Puma-vs-Raptor harness that runs the same Rack app, equivalent config intent, same request probes, and records observable differences.
+- There is an initial Raptor-only compatibility fixture harness and a local Puma-vs-Raptor simulation harness. The simulation captures latency, throughput, RSS, and GC observations, but it is not a full Rack-compliance or production benchmark suite.
+
+## Simulation Harness
+
+Run the local comparison harness with:
+
+```sh
+bundle exec ruby bin/raptor-simulate
+```
+
+The harness writes JSON, CSV, NDJSON samples, server logs, and a Markdown report under `tmp/simulations/<run-id>/`. It launches Puma and Raptor as separate processes against the same generated `config.ru`, performs a warmup phase, then records measured request latency percentiles, achieved throughput, RSS samples, CPU samples, status counts, errors, and GC deltas.
+
+See [puma-raptor-simulation.md](puma-raptor-simulation.md) for profiles, scenarios, metrics, and caveats.
 
 ## Next Tasks
 
 - Build a parity table with columns for Puma API, Puma behavior, Raptor behavior, rationale, status, and test coverage.
 - Add tests for compatibility edges: `workers :auto`, `workers 0`, `ssl_bind`, `plugin`, `activate_control_app`, fork/refork no-ops, warning behavior, and unsupported features.
 - Add lifecycle tests for hook ordering, `pidfile`, `state_path`, restart, and scale-up/scale-down state.
-- Build a small comparison harness that can run one `config.ru` under Puma and Raptor and record env keys, responses, concurrency behavior, blocking IO behavior, and CPU-bound behavior.
+- Extend the simulation harness with slow-client cases, constant-rate load support, longer memory soaks, and graphs from the existing JSON/CSV/NDJSON artifacts.
 
 ## References
 
 - Puma docs: https://puma.io/puma/
 - Puma DSL docs: https://puma.io/puma/Puma/DSL.html
+- Raptor simulation harness: puma-raptor-simulation.md

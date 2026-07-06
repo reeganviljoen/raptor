@@ -34,6 +34,24 @@ Then:
 curl http://127.0.0.1:9292/
 ```
 
+## Puma vs Raptor Simulation
+
+Run the local comparison harness:
+
+```sh
+bundle exec ruby bin/raptor-simulate
+```
+
+It launches Puma and Raptor against the same generated Rack app, performs warmup requests with optional warmup/measurement duration floors, and writes latency percentiles, throughput, RSS/CPU samples, GC deltas, logs, JSON, CSV, NDJSON, and reports under `tmp/simulations/<run-id>/`.
+
+Run the local benchmark suite and build the static dashboard:
+
+```sh
+bundle exec ruby bin/raptor-benchmark-suite --suite smoke
+```
+
+The benchmark platform also runs x64 and arm64 architecture jobs in GitHub Actions after merges to `main`, with YJIT off/on included inside each architecture run, and deploys the updated dashboard to GitHub Pages.
+
 ## Rack Apps and Ractor Isolation
 
 Ractors cannot freely share ordinary mutable Ruby objects. For normal Rack applications, prefer `rackup` so every Ractor worker boots its own app instance inside the worker.
@@ -75,5 +93,7 @@ Start with:
 - [docs/research-roadmap.md](docs/research-roadmap.md) for the current research questions and experiment tracks.
 - [docs/roadmap.md](docs/roadmap.md) for the working GitHub issue roadmap.
 - [docs/puma-comparison.md](docs/puma-comparison.md) for Puma API and architecture parity notes.
+- [docs/puma-raptor-simulation.md](docs/puma-raptor-simulation.md) for the local Puma-vs-Raptor simulation harness.
+- [docs/benchmark-platform.md](docs/benchmark-platform.md) for local benchmark suites, GitHub Actions, and GitHub Pages publishing.
 - [docs/oss-app-test-matrix.md](docs/oss-app-test-matrix.md) for the staged real-world Rack app compatibility plan.
 - [docs/ractor-tradeoffs.md](docs/ractor-tradeoffs.md) for expected advantages, disadvantages, and experiments.
