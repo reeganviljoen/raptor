@@ -658,7 +658,7 @@ module Raptor
           .axis { stroke: #8c97a6; stroke-width: 1; }
           .tick, .x-label, .legend-label { fill: var(--muted); font-size: 12px; }
           .bar, .legend-item, .x-label { cursor: pointer; transition: opacity 120ms ease; }
-          .bar:focus, .legend-item:focus, .x-label:focus { outline: 2px solid #315fba; outline-offset: 2px; }
+          .bar:focus-visible, .legend-item:focus-visible, .x-label:focus-visible { outline: 2px solid #315fba; outline-offset: 2px; }
           .bar.is-hidden { opacity: 0.2; }
           .legend-item.is-hidden, .x-label.is-hidden { opacity: 0.4; }
           .x-label.is-focused { font-weight: 700; fill: var(--ink); }
