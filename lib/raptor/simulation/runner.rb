@@ -30,11 +30,11 @@ module Raptor
 
       attr_reader :profiles, :runtime_profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
                   :output_root, :keep_alive, :timeout, :sample_interval, :sample_count, :min_duration_s,
-                  :warmup_duration_s
+                  :warmup_duration_s, :progress_io
 
       def initialize(profiles:, scenarios:, requests:, concurrency:, warmup_requests:, runtime_profiles: nil, repeats: 1,
                      output_root: "tmp/simulations", keep_alive: true, timeout: 5, sample_interval: 0.5,
-                     sample_count: DEFAULT_SAMPLE_COUNT, min_duration_s: 0, warmup_duration_s: 0)
+                     sample_count: DEFAULT_SAMPLE_COUNT, min_duration_s: 0, warmup_duration_s: 0, progress_io: nil)
         @profiles = profiles
         @runtime_profiles = runtime_profiles || [Configuration.runtime("default")]
         @scenarios = scenarios
@@ -49,51 +49,78 @@ module Raptor
         @sample_count = sample_count.nil? ? nil : [Integer(sample_count), 1].max
         @min_duration_s = [Float(min_duration_s), 0.0].max
         @warmup_duration_s = [Float(warmup_duration_s), 0.0].max
+        @progress_io = progress_io
       end
 
       def run
         run_id = Time.now.utc.strftime("%Y%m%d-%H%M%S")
+        started_at = monotonic_time
         output_dir = File.join(output_root, run_id)
         FileUtils.mkdir_p(output_dir)
 
-        metadata = metadata(run_id)
-        summary_rows = []
-        sample_rows = []
+        begin
+          metadata = metadata(run_id)
+          summary_rows = []
+          sample_rows = []
+          case_number = 0
+          total_cases = runtime_profiles.length * profiles.length * repeats * scenarios.length
 
-        Dir.mktmpdir("raptor-simulation") do |dir|
-          rackup_path = Workload.write(dir)
-          FileUtils.cp(rackup_path, File.join(output_dir, "config.ru"))
+          log_progress(
+            "run start id=#{run_id} runtimes=#{runtime_profiles.map(&:label).join(",")} " \
+            "profiles=#{profiles.map(&:label).join(",")} scenarios=#{scenarios.length} repeats=#{repeats} cases=#{total_cases}"
+          )
 
-          runtime_profiles.each do |runtime_profile|
-            profiles.each do |profile|
-              repeats.times do |index|
-                server = start_server(output_dir, rackup_path, runtime_profile, profile, index + 1)
-                scenarios.each do |scenario|
-                  result = run_case(output_dir, server, runtime_profile, profile, scenario, index + 1)
-                  summary_rows << result.fetch("summary")
-                  sample_rows.concat(result.fetch("samples"))
+          Dir.mktmpdir("raptor-simulation") do |dir|
+            rackup_path = Workload.write(dir)
+            FileUtils.cp(rackup_path, File.join(output_dir, "config.ru"))
+
+            runtime_profiles.each do |runtime_profile|
+              profiles.each do |profile|
+                repeats.times do |index|
+                  server = start_server(output_dir, rackup_path, runtime_profile, profile, index + 1)
+                  log_progress(
+                    "server ready runtime=#{runtime_profile.label} server=#{profile.label} repeat=#{index + 1}/#{repeats} " \
+                    "pid=#{server.pid} port=#{server.port}"
+                  )
+                  scenarios.each do |scenario|
+                    case_number += 1
+                    result = run_case(output_dir, server, runtime_profile, profile, scenario, index + 1, case_number, total_cases)
+                    summary_rows << result.fetch("summary")
+                    sample_rows.concat(result.fetch("samples"))
+                  end
+                ensure
+                  server&.stop
                 end
-              ensure
-                server&.stop
               end
             end
           end
+
+          Report.write_json(File.join(output_dir, "metadata.json"), metadata)
+          Report.write_json(File.join(output_dir, "summary.json"), summary_rows)
+          Report.write_summary_csv(File.join(output_dir, "summary.csv"), summary_rows)
+          Report.write_samples(File.join(output_dir, "samples.ndjson"), sample_rows)
+          Report.write_markdown(File.join(output_dir, "report.md"), metadata, summary_rows)
+          Report.write_html(File.join(output_dir, "report.html"), metadata, summary_rows, sample_rows)
+
+          log_progress(
+            "run finish id=#{run_id} elapsed_s=#{format_seconds(monotonic_time - started_at)} " \
+            "rows=#{summary_rows.length} output=#{output_dir}"
+          )
+
+          {
+            "run_id" => run_id,
+            "output_dir" => output_dir,
+            "html_report" => File.join(output_dir, "report.html"),
+            "metadata" => metadata,
+            "summary" => summary_rows
+          }
+        rescue StandardError => error
+          log_progress(
+            "run error id=#{run_id} elapsed_s=#{format_seconds(monotonic_time - started_at)} " \
+            "error=#{format_error(error)}"
+          )
+          raise
         end
-
-        Report.write_json(File.join(output_dir, "metadata.json"), metadata)
-        Report.write_json(File.join(output_dir, "summary.json"), summary_rows)
-        Report.write_summary_csv(File.join(output_dir, "summary.csv"), summary_rows)
-        Report.write_samples(File.join(output_dir, "samples.ndjson"), sample_rows)
-        Report.write_markdown(File.join(output_dir, "report.md"), metadata, summary_rows)
-        Report.write_html(File.join(output_dir, "report.html"), metadata, summary_rows, sample_rows)
-
-        {
-          "run_id" => run_id,
-          "output_dir" => output_dir,
-          "html_report" => File.join(output_dir, "report.html"),
-          "metadata" => metadata,
-          "summary" => summary_rows
-        }
       end
 
       private
@@ -103,34 +130,64 @@ module Raptor
         ServerProcess.new(profile: profile, runtime_profile: runtime_profile, rackup_path: rackup_path, artifact_dir: artifact_dir).start
       end
 
-      def run_case(output_dir, server, runtime_profile, profile, scenario, repeat)
+      def run_case(output_dir, server, runtime_profile, profile, scenario, repeat, case_number = nil, total_cases = nil)
         case_id = "#{runtime_profile.label}/#{scenario.name}/#{profile.label}/repeat-#{repeat}"
         case_dir = File.join(output_dir, runtime_profile.label, scenario.name, profile.label, "repeat-#{repeat}")
         samples = []
+        started_at = monotonic_time
 
-        warmup_result = warmup(server, scenario)
+        log_progress(
+          "case start #{case_index_label(case_number, total_cases)}runtime=#{runtime_profile.label} server=#{profile.label} " \
+          "scenario=#{scenario.name} repeat=#{repeat}/#{repeats} requests=#{case_requests(profile, scenario)} " \
+          "warmup_requests=#{case_warmup_requests(profile, scenario)} concurrency=#{case_concurrency(profile, scenario)} " \
+          "warmup_min_s=#{format_seconds(warmup_duration_s)} measured_min_s=#{format_seconds(min_duration_s)} " \
+          "samples=#{sample_count || "all"}"
+        )
 
-        before_metrics = fetch_metrics(server)
-        sampler = MemorySampler.new(server.pid, interval: effective_sample_interval, target_count: sample_count)
-        sampler.start
-        measurement = measured_load(server, scenario)
-        sampler.stop
+        begin
+          warmup_result = warmup(server, scenario)
 
-        after_metrics = fetch_metrics(server)
-        samples = sampler.samples.map do |sample|
-          sample.merge(
-            "run_id" => case_id,
-            "runtime" => runtime_profile.label,
-            "scenario" => scenario.name,
-            "server" => profile.label,
-            "target_sample_count" => sample_count
+          before_metrics = fetch_metrics(server)
+          sampler = MemorySampler.new(server.pid, interval: effective_sample_interval, target_count: sample_count)
+          sampler.start
+          begin
+            measurement = measured_load(server, scenario)
+          ensure
+            sampler.stop
+          end
+
+          after_metrics = fetch_metrics(server)
+          samples = sampler.samples.map do |sample|
+            sample.merge(
+              "run_id" => case_id,
+              "runtime" => runtime_profile.label,
+              "scenario" => scenario.name,
+              "server" => profile.label,
+              "target_sample_count" => sample_count
+            )
+          end
+          summary = summarize(case_id, runtime_profile, profile, scenario, measurement, warmup_result, sampler.summary, before_metrics, after_metrics)
+          FileUtils.mkdir_p(case_dir)
+          Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement, "warmup" => warmup_result))
+
+          log_progress(
+            "case finish #{case_index_label(case_number, total_cases)}runtime=#{runtime_profile.label} server=#{profile.label} " \
+            "scenario=#{scenario.name} repeat=#{repeat}/#{repeats} elapsed_s=#{format_seconds(monotonic_time - started_at)} " \
+            "warmup_s=#{format_seconds(warmup_result["duration_s"])} measured_s=#{format_seconds(measurement["duration_s"])} " \
+            "completed=#{measurement.fetch("completed")} errors=#{measurement.fetch("errors").values.sum} " \
+            "rps=#{format_number(measurement.fetch("achieved_rps"))} p99_ms=#{format_number(summary["p99_ms"])} " \
+            "rss_mb=#{format_number(summary["rss_mb_peak"])} samples=#{summary["sample_count"]}"
           )
-        end
-        summary = summarize(case_id, runtime_profile, profile, scenario, measurement, warmup_result, sampler.summary, before_metrics, after_metrics)
-        FileUtils.mkdir_p(case_dir)
-        Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement, "warmup" => warmup_result))
 
-        { "summary" => summary, "samples" => samples }
+          { "summary" => summary, "samples" => samples }
+        rescue StandardError => error
+          log_progress(
+            "case error #{case_index_label(case_number, total_cases)}runtime=#{runtime_profile.label} server=#{profile.label} " \
+            "scenario=#{scenario.name} repeat=#{repeat}/#{repeats} elapsed_s=#{format_seconds(monotonic_time - started_at)} " \
+            "error=#{format_error(error)}"
+          )
+          raise
+        end
       end
 
       def warmup(server, scenario)
@@ -275,6 +332,42 @@ module Raptor
         end
 
         [interval, MIN_SAMPLE_INTERVAL_S].max
+      end
+
+      def log_progress(message)
+        return unless progress_io
+
+        progress_io.puts("[raptor-benchmark] #{Time.now.utc.iso8601} #{message}")
+        progress_io.flush if progress_io.respond_to?(:flush)
+      rescue StandardError
+        nil
+      end
+
+      def monotonic_time
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+
+      def case_index_label(case_number, total_cases)
+        return "" unless case_number && total_cases
+
+        "#{case_number}/#{total_cases} "
+      end
+
+      def format_seconds(value)
+        format("%.3f", Float(value || 0.0))
+      end
+
+      def format_number(value)
+        return "n/a" if value.nil?
+
+        format("%.3f", Float(value))
+      end
+
+      def format_error(error)
+        message = error.message.to_s.gsub(/\s+/, " ").strip
+        return error.class.to_s if message.empty?
+
+        "#{error.class}: #{message}"
       end
 
       def fetch_metrics(server)

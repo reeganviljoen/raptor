@@ -78,6 +78,8 @@ Merge and scheduled runs use the `standard` suite by default. Manual runs can ch
 
 GitHub Pages must be configured to use GitHub Actions as the source. The workflow uses the official Pages artifact/deploy flow, so the deploy job needs `pages: write`, `id-token: write`, and `contents: write` so it can push the updated `benchmark-history` branch before deploying the rendered dashboard.
 
+Benchmark commands emit `[raptor-benchmark]` progress lines for each run, server, and measured case. In GitHub Actions, those lines show which runtime, adapter profile, scenario, and repeat is currently running, then print the measured duration, completions, errors, requests/sec, p99 latency, RSS, and sample count when the case finishes.
+
 ## Reading Results
 
 Treat local and GitHub-hosted runner results as trend signals, not final claims.
