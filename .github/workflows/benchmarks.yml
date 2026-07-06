@@ -1,0 +1,155 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Benchmark suite to run
+        required: true
+        default: standard
+        type: choice
+        options:
+          - smoke
+          - standard
+          - full
+      deploy_pages:
+        description: Deploy the generated benchmark dashboard to GitHub Pages
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: raptor-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: ${{ matrix.arch }} / ${{ matrix.runtime }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runtime: yjit-off
+            runner: ubuntu-24.04
+          - arch: x64
+            runtime: yjit-on
+            runner: ubuntu-24.04
+          - arch: arm64
+            runtime: yjit-off
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            runtime: yjit-on
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      BENCH_SUITE: ${{ github.event.inputs.suite || 'standard' }}
+      RAPTOR_BENCH_ARCH: ${{ matrix.arch }}
+      RAPTOR_BENCH_OS: ${{ matrix.runner }}
+      RAPTOR_BENCH_RUNNER: ${{ matrix.runner }}
+      RAPTOR_BENCH_AXIS: ${{ matrix.arch }}-${{ matrix.runtime }}
+      RAPTOR_BENCH_OUTPUT: tmp/raptor-benchmarks/runs/${{ matrix.arch }}-${{ matrix.runtime }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Run benchmark suite
+        run: >
+          bundle exec ruby bin/raptor-benchmark-suite
+          --suite "$BENCH_SUITE"
+          --runtime "${{ matrix.runtime }}"
+          --output "$RAPTOR_BENCH_OUTPUT"
+          --axis "$RAPTOR_BENCH_AXIS"
+          --arch "$RAPTOR_BENCH_ARCH"
+          --os "$RAPTOR_BENCH_OS"
+          --runner "$RAPTOR_BENCH_RUNNER"
+          --no-site
+
+      - name: Upload benchmark data
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.arch }}-${{ matrix.runtime }}
+          path: ${{ env.RAPTOR_BENCH_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 30
+
+  pages:
+    name: Build and deploy benchmark dashboard
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_pages == 'true' }}
+    needs: benchmark
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Restore benchmark history cache
+        uses: actions/cache/restore@v4
+        with:
+          path: tmp/raptor-benchmark-history
+          key: raptor-benchmarks-${{ github.run_id }}
+          restore-keys: |
+            raptor-benchmarks-
+
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-*
+          path: tmp/raptor-benchmark-new
+
+      - name: Merge benchmark artifacts into history
+        run: |
+          mkdir -p tmp/raptor-benchmark-history
+          for artifact in tmp/raptor-benchmark-new/benchmark-*; do
+            [ -d "$artifact" ] || continue
+            axis="$(basename "$artifact" | sed 's/^benchmark-//')"
+            mkdir -p "tmp/raptor-benchmark-history/$axis"
+            cp -R "$artifact"/. "tmp/raptor-benchmark-history/$axis/"
+          done
+
+      - name: Build benchmark dashboard
+        run: >
+          bundle exec ruby bin/raptor-benchmark-site
+          --input tmp/raptor-benchmark-history
+          --output public
+          --title "Raptor Puma/Ruby Benchmarks"
+
+      - name: Save benchmark history cache
+        uses: actions/cache/save@v4
+        with:
+          path: tmp/raptor-benchmark-history
+          key: raptor-benchmarks-${{ github.run_id }}
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

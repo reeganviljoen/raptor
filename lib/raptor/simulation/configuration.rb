@@ -67,6 +67,8 @@ module Raptor
           "io" => Scenario.new(name: "io", path: "/io"),
           "mixed" => Scenario.new(name: "mixed", path: "/mixed"),
           "allocation" => Scenario.new(name: "allocation", path: "/allocation"),
+          "json" => Scenario.new(name: "json", path: "/json"),
+          "erb" => Scenario.new(name: "erb", path: "/erb"),
           "large" => Scenario.new(name: "large", path: "/large"),
           "upload" => Scenario.new(
             name: "upload",

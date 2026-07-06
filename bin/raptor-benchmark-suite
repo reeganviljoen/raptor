@@ -1,0 +1,185 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+
+require "optparse"
+require "raptor/simulation"
+
+module Raptor
+  module Simulation
+    class BenchmarkSuiteCLI
+      SCENARIOS = %w[tiny cpu io mixed allocation json erb large upload].freeze
+      SUITES = {
+        "smoke" => {
+          profile: "quick",
+          scenarios: %w[tiny cpu json erb],
+          runtimes: %w[yjit-off yjit-on],
+          requests: 20,
+          warmup_requests: 5,
+          concurrency: 2,
+          repeats: 1,
+          sample_interval: 0.05
+        },
+        "standard" => {
+          profile: "full",
+          scenarios: SCENARIOS,
+          runtimes: %w[yjit-off yjit-on],
+          requests: 1_000,
+          warmup_requests: 1_000,
+          concurrency: 8,
+          repeats: 3,
+          sample_interval: 0.25
+        },
+        "full" => {
+          profile: "full",
+          scenarios: SCENARIOS,
+          runtimes: %w[yjit-off yjit-on],
+          requests: 2_000,
+          warmup_requests: 2_000,
+          concurrency: 8,
+          repeats: 5,
+          sample_interval: 0.25
+        }
+      }.freeze
+
+      def self.run(argv = ARGV)
+        new(argv).run
+      end
+
+      def initialize(argv)
+        @argv = argv
+        @options = {
+          suite: ENV.fetch("RAPTOR_BENCH_SUITE", "smoke"),
+          scenarios: [],
+          runtimes: [],
+          output: ENV.fetch("RAPTOR_BENCH_OUTPUT", "tmp/raptor-benchmarks/runs"),
+          site: ENV.fetch("RAPTOR_BENCH_SITE", "tmp/raptor-benchmarks/site"),
+          build_site: true,
+          arch: ENV.fetch("RAPTOR_BENCH_ARCH", nil),
+          os: ENV.fetch("RAPTOR_BENCH_OS", nil),
+          runner: ENV.fetch("RAPTOR_BENCH_RUNNER", nil),
+          axis: ENV.fetch("RAPTOR_BENCH_AXIS", nil)
+        }
+        @explicit = {}
+      end
+
+      def run
+        parse!
+        settings = suite_settings
+        axis = @options[:axis] || axis_label(settings)
+
+        with_benchmark_env(settings, axis) do
+          result = Runner.new(
+            profiles: Configuration.profile(settings.fetch(:profile)),
+            runtime_profiles: Configuration.runtimes(settings.fetch(:runtimes)),
+            scenarios: scenarios(settings),
+            requests: settings.fetch(:requests),
+            concurrency: settings.fetch(:concurrency),
+            warmup_requests: settings.fetch(:warmup_requests),
+            repeats: settings.fetch(:repeats),
+            output_root: @options.fetch(:output),
+            sample_interval: settings.fetch(:sample_interval)
+          ).run
+
+          puts "benchmark suite: #{@options.fetch(:suite)}"
+          puts "benchmark axis: #{axis}"
+          puts "wrote #{result.fetch("output_dir")}"
+          puts "html report: #{result.fetch("html_report")}"
+
+          if @options[:build_site]
+            site = BenchmarkSite.build(input_roots: [@options.fetch(:output)], output_dir: @options.fetch(:site))
+            puts "site index: #{site.fetch("index")}"
+          end
+        end
+      end
+
+      private
+
+      def parse!
+        parser = OptionParser.new do |opts|
+          opts.banner = "Usage: raptor-benchmark-suite [options]"
+
+          opts.on("--suite NAME", "Benchmark suite: smoke, standard, full") { |value| set_option(:suite, value) }
+          opts.on("--scenario NAME", "Scenario to include; repeatable") { |value| @options[:scenarios] << value }
+          opts.on("--runtime NAME", "Runtime profile: yjit-off, yjit-on, all, default; repeatable") { |value| @options[:runtimes] << value }
+          opts.on("--profile NAME", "Override suite profile") { |value| set_option(:profile, value) }
+          opts.on("--requests COUNT", Integer, "Override measured requests per case") { |value| set_option(:requests, value) }
+          opts.on("--warmup-requests COUNT", Integer, "Override warmup requests per case") { |value| set_option(:warmup_requests, value) }
+          opts.on("--concurrency COUNT", Integer, "Override client concurrency") { |value| set_option(:concurrency, value) }
+          opts.on("--repeat COUNT", Integer, "Override repeats per case") { |value| set_option(:repeats, value) }
+          opts.on("--sample-interval SECONDS", Float, "Override RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--output DIR", "Benchmark output root") { |value| set_option(:output, value) }
+          opts.on("--site-output DIR", "Static site output directory") { |value| set_option(:site, value) }
+          opts.on("--arch NAME", "Architecture label for metadata") { |value| set_option(:arch, value) }
+          opts.on("--os NAME", "OS label for metadata") { |value| set_option(:os, value) }
+          opts.on("--runner NAME", "Runner label for metadata") { |value| set_option(:runner, value) }
+          opts.on("--axis NAME", "Benchmark axis label for metadata") { |value| set_option(:axis, value) }
+          opts.on("--[no-]site", "Build the static benchmark site after the suite") { |value| set_option(:build_site, value) }
+          opts.on("--list", "List benchmark suites and scenarios") do
+            puts "suites: #{SUITES.keys.join(", ")}"
+            puts "scenarios: #{SCENARIOS.join(", ")}"
+            puts "runtimes: #{Configuration.runtime_names.join(", ")}"
+            exit
+          end
+          opts.on("-h", "--help", "Print help") do
+            puts opts
+            exit
+          end
+        end
+
+        parser.parse!(@argv)
+      end
+
+      def set_option(name, value)
+        @options[name] = value
+        @explicit[name] = true
+      end
+
+      def suite_settings
+        suite = SUITES.fetch(@options.fetch(:suite)) do
+          raise ArgumentError, "unknown benchmark suite #{@options.fetch(:suite).inspect}; choose one of #{SUITES.keys.join(", ")}"
+        end
+
+        suite.merge(@explicit.slice(:profile, :requests, :warmup_requests, :concurrency, :repeats, :sample_interval)).merge(
+          runtimes: @options[:runtimes].empty? ? suite.fetch(:runtimes) : @options[:runtimes],
+          scenarios: @options[:scenarios].empty? ? suite.fetch(:scenarios) : @options[:scenarios]
+        )
+      end
+
+      def scenarios(settings)
+        all = Configuration.scenarios
+        settings.fetch(:scenarios).map do |name|
+          all.fetch(name) { raise ArgumentError, "unknown scenario #{name.inspect}; choose one of #{all.keys.join(", ")}" }
+        end
+      end
+
+      def axis_label(settings)
+        [
+          @options[:arch],
+          @options.fetch(:suite),
+          settings.fetch(:runtimes).join("-")
+        ].compact.join("-")
+      end
+
+      def with_benchmark_env(settings, axis)
+        values = {
+          "RAPTOR_BENCH_SUITE" => @options.fetch(:suite),
+          "RAPTOR_BENCH_AXIS" => axis,
+          "RAPTOR_BENCH_ARCH" => @options[:arch],
+          "RAPTOR_BENCH_OS" => @options[:os],
+          "RAPTOR_BENCH_RUNNER" => @options[:runner],
+          "RAPTOR_BENCH_SCENARIOS" => settings.fetch(:scenarios).join(",")
+        }
+        previous = values.to_h { |key, _value| [key, ENV.fetch(key, nil)] }
+        values.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value.to_s }
+
+        yield
+      ensure
+        previous&.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+      end
+    end
+  end
+end
+
+Raptor::Simulation::BenchmarkSuiteCLI.run

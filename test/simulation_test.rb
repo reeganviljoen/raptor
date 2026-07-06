@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "fileutils"
+require "json"
 require "raptor/simulation"
 require "raptor/simulation/cli"
 
@@ -51,6 +53,13 @@ class SimulationTest < Minitest::Test
     assert_equal %w[yjit-off yjit-on], runtimes.map(&:label)
   end
 
+  def test_web_benchmark_scenarios_include_json_and_erb
+    scenarios = Raptor::Simulation::Configuration.scenarios
+
+    assert_equal "/json", scenarios.fetch("json").path
+    assert_equal "/erb", scenarios.fetch("erb").path
+  end
+
   def test_yjit_preset_applies_benchmark_defaults_without_overriding_explicit_values
     cli = Raptor::Simulation::CLI.new(%w[--preset yjit --profile quick --requests 4])
 
@@ -74,6 +83,8 @@ class SimulationTest < Minitest::Test
       assert_includes source, "/__health__"
       assert_includes source, "/__metrics__"
       assert_includes source, "/allocation"
+      assert_includes source, "/json"
+      assert_includes source, "/erb"
       assert_includes source, "/upload"
     end
   end
@@ -195,6 +206,56 @@ class SimulationTest < Minitest::Test
       assert_includes html, "yjit-off"
       assert_includes html, "Benchmark Quality Warnings"
       assert_includes html, "short_yjit_warmup"
+    end
+  end
+
+  def test_benchmark_site_indexes_run_reports_and_combined_data
+    Dir.mktmpdir do |dir|
+      run_root = File.join(dir, "runs")
+      run_dir = File.join(run_root, "20260706-000000")
+      site_dir = File.join(dir, "site")
+      FileUtils.mkdir_p(run_dir)
+
+      metadata = {
+        "run_id" => "20260706-000000",
+        "created_at" => "2026-07-06T00:00:00Z",
+        "git_sha" => "abc123",
+        "ruby" => RUBY_DESCRIPTION,
+        "raptor_version" => "0.1.0",
+        "puma_version" => "8.0.2",
+        "rack_version" => "3.2.6",
+        "cpu_count" => 8,
+        "platform" => RUBY_PLATFORM,
+        "machine_arch" => "arm64",
+        "machine_os" => "darwin",
+        "benchmark_suite" => "smoke",
+        "benchmark_axis" => "arm64-yjit-on",
+        "runner_label" => "local",
+        "requests" => 10,
+        "warmup_requests" => 2,
+        "concurrency" => 2,
+        "repeats" => 1,
+        "keep_alive" => true,
+        "runtime_profiles" => [{ "label" => "yjit-on", "yjit" => true }],
+        "scenarios" => ["json"]
+      }
+      rows = [benchmark_row("yjit-on", "json", "raptor-1r", "raptor", 1200.0, 2.0, 24.0)]
+
+      File.write(File.join(run_dir, "metadata.json"), "#{JSON.pretty_generate(metadata)}\n")
+      File.write(File.join(run_dir, "summary.json"), "#{JSON.pretty_generate(rows)}\n")
+      File.write(File.join(run_dir, "summary.csv"), "runtime,scenario\n")
+      File.write(File.join(run_dir, "report.html"), "<!doctype html><p>report</p>\n")
+
+      result = Raptor::Simulation::BenchmarkSite.build(input_roots: [run_root], output_dir: site_dir, title: "Test Benchmarks")
+      index = File.read(result.fetch("index"))
+      combined = JSON.parse(File.read(File.join(site_dir, "data", "runs.json")))
+
+      assert_equal 1, result.fetch("runs")
+      assert_includes index, "Test Benchmarks"
+      assert_includes index, "arm64-yjit-on"
+      assert_includes index, "runs/20260706-000000-smoke-arm64-yjit-on/report.html"
+      assert_equal "arm64-yjit-on", combined.fetch("runs").first.fetch("benchmark_axis")
+      assert File.exist?(File.join(site_dir, "data", "summary.csv"))
     end
   end
 

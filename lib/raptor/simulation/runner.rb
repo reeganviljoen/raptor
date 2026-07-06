@@ -4,6 +4,7 @@ require "etc"
 require "fileutils"
 require "json"
 require "net/http"
+require "rbconfig"
 require "time"
 require "tmpdir"
 
@@ -247,6 +248,13 @@ module Raptor
           "git_sha" => git_sha,
           "cpu_count" => Etc.nprocessors,
           "platform" => RUBY_PLATFORM,
+          "machine_arch" => ENV.fetch("RAPTOR_BENCH_ARCH", RbConfig::CONFIG["host_cpu"]),
+          "machine_os" => ENV.fetch("RAPTOR_BENCH_OS", RbConfig::CONFIG["host_os"]),
+          "benchmark_suite" => ENV.fetch("RAPTOR_BENCH_SUITE", nil),
+          "benchmark_axis" => ENV.fetch("RAPTOR_BENCH_AXIS", nil),
+          "runner_label" => ENV.fetch("RAPTOR_BENCH_RUNNER", ENV.fetch("RUNNER_NAME", nil)),
+          "github_run_id" => ENV.fetch("GITHUB_RUN_ID", nil),
+          "github_run_attempt" => ENV.fetch("GITHUB_RUN_ATTEMPT", nil),
           "allocator" => ENV.fetch("RUBY_ALLOCATOR", nil),
           "malloc_arena_max" => ENV.fetch("MALLOC_ARENA_MAX", nil),
           "harness_yjit" => defined?(RubyVM::YJIT) ? RubyVM::YJIT.enabled? : nil,

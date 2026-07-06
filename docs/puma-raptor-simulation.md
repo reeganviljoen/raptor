@@ -6,6 +6,8 @@ The harness follows the Speedshop measurement posture: record absolute latency, 
 
 `raptor-simulate` is a repository development command, not an installed gem executable. Puma remains a development dependency so the core `raptor` gem does not depend on Puma at runtime.
 
+For repeatable local suites, GitHub Actions automation, and GitHub Pages publishing, see [docs/benchmark-platform.md](benchmark-platform.md).
+
 ## Run It
 
 List the built-in profiles and scenarios:
@@ -101,6 +103,8 @@ Use the local harness to compare Raptor and Puma under the same generated worklo
 - `io`: blocking sleep to simulate waiting on IO.
 - `mixed`: small CPU loop plus sleep.
 - `allocation`: transient object allocation and string joining.
+- `json`: JSON parse plus generate.
+- `erb`: ERB template rendering.
 - `large`: 64 KiB response body.
 - `upload`: 64 KiB POST body.
 

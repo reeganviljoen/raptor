@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "simulation/configuration"
+require_relative "simulation/benchmark_site"
 require_relative "simulation/load_generator"
 require_relative "simulation/memory_sampler"
 require_relative "simulation/percentiles"
