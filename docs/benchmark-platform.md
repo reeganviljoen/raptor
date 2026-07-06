@@ -29,11 +29,13 @@ bundle exec ruby bin/raptor-benchmark-site \
   --output tmp/raptor-benchmarks/site
 ```
 
-The suite runner supports three presets:
+The suite runner supports three presets. The benchmark suites now use Puma's own local benchmark shapes instead of project-specific app scenarios:
 
-- `smoke`: quick local signal, `quick` profile, `tiny`, `cpu`, `json`, and `erb`, YJIT off/on, 20 measured requests, 5 warmup requests, one repeat.
-- `standard`: scheduled CI signal, `full` profile, all app-server scenarios, YJIT off/on, 1,000 measured requests, 1,000 warmup requests, three repeats.
-- `full`: heavier release-quality signal, `full` profile, all app-server scenarios, YJIT off/on, 2,000 measured requests, 2,000 warmup requests, five repeats.
+- `smoke`: quick local signal, `quick` profile, one scenario from each Puma-derived benchmark family, YJIT off/on, 20 measured requests, 5 warmup requests, one repeat.
+- `standard`: scheduled CI signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, 1,000 measured requests, 1,000 warmup requests, three repeats.
+- `full`: heavier release-quality signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, 2,000 measured requests, 2,000 warmup requests, five repeats.
+
+All suite profiles are capacity-matched. Puma capacity is `(workers > 0 ? workers : 1) * threads`; Raptor capacity is its Ractor count. The `full` profile creates Raptor profiles for every Puma capacity shape, including single-thread, single-process five-thread, `N x 1`, and `N x 5` Puma shapes. Report medians are grouped by scenario, runtime, adapter, and capacity so Puma and Raptor rows with the same request-slot count can be read side by side.
 
 To run one axis locally, pass the runtime explicitly:
 
@@ -47,30 +49,24 @@ bundle exec ruby bin/raptor-benchmark-suite \
 
 ## Benchmark Scenarios
 
-The benchmark suite uses generated Rack endpoints so Puma and Raptor receive the same app behavior:
+The benchmark suite uses generated Rack endpoints so Puma and Raptor receive the same app behavior while matching Puma's established benchmark contracts:
 
-- `tiny`: tiny static response.
-- `cpu`: Ruby CPU loop.
-- `io`: blocking sleep to model waiting on IO.
-- `mixed`: Ruby CPU work plus short sleep.
-- `allocation`: transient string/array allocation.
-- `json`: JSON parse plus generate, mirroring common API work and byroot's Ruby JSON focus.
-- `erb`: ERB rendering with repeated item output, mirroring common view/template work.
-- `large`: 64 KiB response body.
-- `upload`: 64 KiB POST body.
+- `puma-response-<type>-<size>kb`: based on Puma's `benchmarks/local/response_time_wrk.rb` and `test/rackup/ci_select.ru`. The generated app accepts the same `Body-Conf` request header for `array`, `chunk`, `string`, and `io` response bodies across 1 KiB, 10 KiB, 100 KiB, 256 KiB, 512 KiB, 1024 KiB, and 2048 KiB.
+- `puma-long-tail-fib-200ms-x<multiplier>`: based on Puma's `benchmarks/local/long_tail_hey.rb` pressure shape and `test/rackup/sleep_fibonacci.ru` app shape. The generated app serves `/sleep0.2` with mixed Fibonacci CPU work plus sleep, and each scenario scales client concurrency from the server profile capacity.
+- `puma-sleep-fibonacci-<delay>ms`: based on Puma's `benchmarks/local/sleep_fibonacci_test.rb` app microbenchmark. It performs ten serial requests for selected delays from Puma's small, medium, and large delay ranges.
+
+The older generated scenarios (`tiny`, `cpu`, `json`, `erb`, and friends) remain available through `bin/raptor-simulate --scenario ...` for ad hoc debugging, but they are no longer the benchmark-suite defaults.
 
 ## GitHub Actions
 
 `.github/workflows/benchmarks.yml` provides a manual and weekly scheduled benchmark workflow.
 
-The benchmark matrix runs:
+The benchmark matrix runs one job per architecture:
 
 - `x64` on `ubuntu-24.04`
 - `arm64` on `ubuntu-24.04-arm`
-- `yjit-off`
-- `yjit-on`
 
-Each matrix job runs one runtime axis for both Puma and Raptor. The Pages job downloads the axis artifacts, merges them into a benchmark-history cache, builds the static dashboard, and deploys the dashboard with GitHub Pages.
+Each matrix job runs both `yjit-off` and `yjit-on` for both Puma and Raptor, and writes a single run report for that architecture. The Pages job downloads the architecture artifacts, merges them into a benchmark-history cache, builds the static dashboard, writes one aggregate report per machine architecture under `architectures/<arch>/index.html`, and deploys the dashboard with GitHub Pages.
 
 Manual runs can choose `smoke`, `standard`, or `full`, and can disable Pages deployment while still producing downloadable artifacts.
 
@@ -83,8 +79,8 @@ Treat local and GitHub-hosted runner results as trend signals, not final claims.
 - YJIT comparisons need warmup. Short runs can include cold compilation cost.
 - GitHub-hosted runners are convenient but noisy. Use dedicated, pinned machines before making release or marketing claims.
 - Compare absolute throughput, latency, memory, CPU, GC, and error data together.
-- App-server sizing should be interpreted through process count, thread count, memory, CPU, and copy-on-write behavior rather than a single RPS number.
-- Puma thread-heavy profiles can show GVL wait effects. Ruby code, JSON, and ERB scenarios are intentionally included to make that visible.
+- App-server sizing should be interpreted through matched request-slot capacity, process count, thread count, memory, CPU, and copy-on-write behavior rather than a single RPS number.
+- Puma response-body scenarios are primarily app-server response handling tests. Long-tail and sleep/fibonacci scenarios add mixed Ruby CPU work plus sleep so YJIT effects are less likely to be hidden by a pure sleep endpoint.
 - Raptor results must be read beside Ractor compatibility limits; many real Ruby objects and libraries still do not work cleanly from secondary Ractors.
 
 ## References
@@ -92,6 +88,10 @@ Treat local and GitHub-hosted runner results as trend signals, not final claims.
 - speed.ruby.org: https://speed.ruby-lang.org/
 - Shopify yjit-metrics: https://github.com/Shopify/yjit-metrics
 - ruby-bench: https://github.com/ruby/ruby-bench
+- Puma local benchmarks: https://github.com/puma/puma/tree/main/benchmarks/local
+- Puma response benchmark app: https://github.com/puma/puma/blob/main/test/rackup/ci_select.ru
+- Puma sleep/fibonacci benchmark app: https://github.com/puma/puma/blob/main/test/rackup/sleep_fibonacci.ru
+- Puma sleep/fibonacci benchmark runner: https://github.com/puma/puma/blob/main/benchmarks/local/sleep_fibonacci_test.rb
 - GitHub Pages custom workflows: https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
 - GitHub-hosted runners: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
 - Speedshop app-server sizing: https://www.speedshop.co/blog/appserver/

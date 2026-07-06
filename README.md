@@ -50,7 +50,7 @@ Run the local benchmark suite and build the static dashboard:
 bundle exec ruby bin/raptor-benchmark-suite --suite smoke
 ```
 
-The benchmark platform can also run an x64/arm64 and YJIT off/on matrix in GitHub Actions and deploy a Pages dashboard.
+The benchmark platform can also run x64 and arm64 architecture jobs in GitHub Actions, with YJIT off/on included inside each architecture run, and deploy a Pages dashboard.
 
 ## Rack Apps and Ractor Isolation
 

@@ -26,22 +26,14 @@ concurrency:
 
 jobs:
   benchmark:
-    name: ${{ matrix.arch }} / ${{ matrix.runtime }}
+    name: ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x64
-            runtime: yjit-off
-            runner: ubuntu-24.04
-          - arch: x64
-            runtime: yjit-on
             runner: ubuntu-24.04
           - arch: arm64
-            runtime: yjit-off
-            runner: ubuntu-24.04-arm
-          - arch: arm64
-            runtime: yjit-on
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -50,8 +42,8 @@ jobs:
       RAPTOR_BENCH_ARCH: ${{ matrix.arch }}
       RAPTOR_BENCH_OS: ${{ matrix.runner }}
       RAPTOR_BENCH_RUNNER: ${{ matrix.runner }}
-      RAPTOR_BENCH_AXIS: ${{ matrix.arch }}-${{ matrix.runtime }}
-      RAPTOR_BENCH_OUTPUT: tmp/raptor-benchmarks/runs/${{ matrix.arch }}-${{ matrix.runtime }}
+      RAPTOR_BENCH_AXIS: ${{ matrix.arch }}-all-runtimes
+      RAPTOR_BENCH_OUTPUT: tmp/raptor-benchmarks/runs/${{ matrix.arch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,7 +58,6 @@ jobs:
         run: >
           bundle exec ruby bin/raptor-benchmark-suite
           --suite "$BENCH_SUITE"
-          --runtime "${{ matrix.runtime }}"
           --output "$RAPTOR_BENCH_OUTPUT"
           --axis "$RAPTOR_BENCH_AXIS"
           --arch "$RAPTOR_BENCH_ARCH"
@@ -77,7 +68,7 @@ jobs:
       - name: Upload benchmark data
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.arch }}-${{ matrix.runtime }}
+          name: benchmark-${{ matrix.arch }}
           path: ${{ env.RAPTOR_BENCH_OUTPUT }}
           if-no-files-found: error
           retention-days: 30

@@ -56,12 +56,15 @@ module Raptor
 
           runtime_profiles.each do |runtime_profile|
             profiles.each do |profile|
-              scenarios.each do |scenario|
-                repeats.times do |index|
-                  result = run_case(output_dir, rackup_path, runtime_profile, profile, scenario, index + 1)
+              repeats.times do |index|
+                server = start_server(output_dir, rackup_path, runtime_profile, profile, index + 1)
+                scenarios.each do |scenario|
+                  result = run_case(output_dir, server, runtime_profile, profile, scenario, index + 1)
                   summary_rows << result.fetch("summary")
                   sample_rows.concat(result.fetch("samples"))
                 end
+              ensure
+                server&.stop
               end
             end
           end
@@ -85,13 +88,16 @@ module Raptor
 
       private
 
-      def run_case(output_dir, rackup_path, runtime_profile, profile, scenario, repeat)
+      def start_server(output_dir, rackup_path, runtime_profile, profile, repeat)
+        artifact_dir = File.join(output_dir, runtime_profile.label, "_servers", profile.label, "repeat-#{repeat}")
+        ServerProcess.new(profile: profile, runtime_profile: runtime_profile, rackup_path: rackup_path, artifact_dir: artifact_dir).start
+      end
+
+      def run_case(output_dir, server, runtime_profile, profile, scenario, repeat)
         case_id = "#{runtime_profile.label}/#{scenario.name}/#{profile.label}/repeat-#{repeat}"
         case_dir = File.join(output_dir, runtime_profile.label, scenario.name, profile.label, "repeat-#{repeat}")
-        server = ServerProcess.new(profile: profile, runtime_profile: runtime_profile, rackup_path: rackup_path, artifact_dir: case_dir)
         samples = []
 
-        server.start
         before_metrics = fetch_metrics(server)
         warmup(server, scenario)
 
@@ -103,22 +109,22 @@ module Raptor
         after_metrics = fetch_metrics(server)
         samples = sampler.samples.map { |sample| sample.merge("run_id" => case_id, "runtime" => runtime_profile.label, "scenario" => scenario.name, "server" => profile.label) }
         summary = summarize(case_id, runtime_profile, profile, scenario, measurement, sampler.summary, before_metrics, after_metrics)
+        FileUtils.mkdir_p(case_dir)
         Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement))
 
         { "summary" => summary, "samples" => samples }
-      ensure
-        server&.stop
       end
 
       def warmup(server, scenario)
-        return if warmup_requests <= 0
+        count = case_warmup_requests(scenario)
+        return if count <= 0
 
         LoadGenerator.new(
           host: "127.0.0.1",
           port: server.port,
           scenario: scenario,
-          requests: warmup_requests,
-          concurrency: [concurrency, warmup_requests].min,
+          requests: count,
+          concurrency: [case_concurrency(server.profile, scenario), count].min,
           timeout: timeout,
           keep_alive: keep_alive
         ).run
@@ -129,8 +135,8 @@ module Raptor
           host: "127.0.0.1",
           port: server.port,
           scenario: scenario,
-          requests: requests,
-          concurrency: concurrency,
+          requests: case_requests(server.profile, scenario),
+          concurrency: case_concurrency(server.profile, scenario),
           timeout: timeout,
           keep_alive: keep_alive
         ).run
@@ -141,18 +147,24 @@ module Raptor
         gc_scope = gc_delta_scope(profile, before_metrics, after_metrics)
         gc_delta = gc_scope == "same_worker" ? gc_delta(before_metrics, after_metrics) : empty_gc_delta
         error_count = measurement.fetch("errors").values.sum
+        measured_requests = case_requests(profile, scenario)
+        measured_concurrency = case_concurrency(profile, scenario)
 
         {
           "run_id" => case_id,
           "runtime" => runtime_profile.label,
           "yjit" => runtime_profile.yjit,
           "scenario" => scenario.name,
+          "scenario_family" => scenario.family,
+          "benchmark_source" => scenario.source_label,
+          "benchmark_source_url" => scenario.source_url,
           "server" => profile.label,
+          "server_capacity" => server_capacity(profile),
           "adapter" => profile.adapter,
           "workers" => profile.workers,
           "threads" => profile.threads,
-          "requests" => requests,
-          "concurrency" => concurrency,
+          "requests" => measured_requests,
+          "concurrency" => measured_concurrency,
           "keep_alive" => keep_alive,
           "completed" => measurement.fetch("completed"),
           "errors" => error_count,
@@ -175,6 +187,30 @@ module Raptor
           "gc_metrics_before" => before_metrics,
           "gc_metrics_after" => after_metrics
         }
+      end
+
+      def case_requests(profile, scenario)
+        return Integer(scenario.requests) if scenario.requests
+        return case_concurrency(profile, scenario) * Integer(scenario.requests_per_connection) if scenario.requests_per_connection
+
+        requests
+      end
+
+      def case_warmup_requests(scenario)
+        return Integer(scenario.warmup_requests) if scenario.warmup_requests
+
+        warmup_requests
+      end
+
+      def case_concurrency(profile, scenario)
+        return [Integer(scenario.concurrency), 1].max if scenario.concurrency
+        return concurrency unless scenario.concurrency_multiplier
+
+        [(server_capacity(profile) * Float(scenario.concurrency_multiplier)).round, 1].max
+      end
+
+      def server_capacity(profile)
+        profile.capacity
       end
 
       def fetch_metrics(server)
@@ -266,8 +302,19 @@ module Raptor
           "quality_warnings" => quality_warnings,
           "runtime_profiles" => runtime_profiles.map(&:to_h),
           "profiles" => profiles.map(&:to_h),
-          "scenarios" => scenarios.map(&:name)
+          "scenarios" => scenarios.map(&:name),
+          "benchmark_sources" => benchmark_sources
         }
+      end
+
+      def benchmark_sources
+        scenarios.map do |scenario|
+          {
+            "label" => scenario.source_label,
+            "family" => scenario.family,
+            "url" => scenario.source_url
+          }
+        end.uniq { |source| [source["label"], source["family"], source["url"]] }
       end
 
       def quality_warnings

@@ -44,6 +44,7 @@ module Raptor
         entries = copy_run_artifacts(runs)
         write_combined_json(entries)
         write_combined_csv(entries)
+        write_architecture_reports(entries)
         write_index(entries)
 
         {
@@ -178,6 +179,7 @@ module Raptor
         html << "</section>"
         html << section("Latest Runs", runs_table(entries))
         html << section("Latest Adapter Medians", medians_table(entries))
+        html << section("Architecture Reports", architecture_links(entries))
         html << section("Data Files", data_links)
         html << section("Methodology References", references)
         html << "</main>"
@@ -213,7 +215,7 @@ module Raptor
         end
       end
 
-      def runs_table(entries)
+      def runs_table(entries, href_prefix: "")
         return "<p>No benchmark runs found.</p>" if entries.empty?
 
         rows = entries.sort_by { |entry| entry.fetch("metadata").fetch("created_at", "") }.reverse.map do |entry|
@@ -226,14 +228,14 @@ module Raptor
             metadata["machine_os"] || "n/a",
             metadata["ruby"],
             Array(metadata["scenarios"]).join(", "),
-            link("report", entry.fetch("report_href"))
+            link("report", "#{href_prefix}#{entry.fetch("report_href")}")
           ]
         end
 
         table(["Created", "Suite", "Axis", "Arch", "OS", "Ruby", "Scenarios", "Report"], rows)
       end
 
-      def medians_table(entries)
+      def medians_table(entries, href_prefix: "")
         rows = entries.flat_map do |entry|
           metadata = entry.fetch("metadata")
           Report.adapter_summary(entry.fetch("summary")).map do |row|
@@ -245,13 +247,14 @@ module Raptor
               row["scenario"],
               row["adapter"],
               row["runtime"],
+              row["server_capacity"],
               Report.format_number(row["best_rps"]),
               row["best_rps_server"],
               Report.format_number(row["lowest_p99_ms"]),
               row["lowest_p99_server"],
               Report.format_number(row["lowest_rss_mb_peak"]),
               row["runs"],
-              link("report", entry.fetch("report_href"))
+              link("report", "#{href_prefix}#{entry.fetch("report_href")}")
             ]
           end
         end
@@ -259,16 +262,133 @@ module Raptor
         return "<p>No summary rows found.</p>" if rows.empty?
 
         table(
-          ["Created", "Suite", "Axis", "Arch", "Scenario", "Adapter", "Runtime", "Best median RPS", "RPS profile", "Lowest median p99", "p99 profile", "Lowest median RSS MB", "Runs", "Report"],
-          rows.sort_by { |row| [row[0].to_s, row[1].to_s, row[2].to_s, row[4].to_s, row[5].to_s, row[6].to_s] }.reverse
+          ["Created", "Suite", "Axis", "Arch", "Scenario", "Adapter", "Runtime", "Capacity", "Best median RPS", "RPS profile", "Lowest median p99", "p99 profile", "Lowest median RSS MB", "Runs", "Report"],
+          rows.sort_by { |row| [row[0].to_s, row[1].to_s, row[2].to_s, row[4].to_s, row[5].to_s, row[6].to_s, row[7].to_i] }.reverse
         )
       end
 
-      def data_links
+      def architecture_links(entries)
+        grouped = entries.group_by { |entry| entry.fetch("metadata")["machine_arch"] || "unknown" }
+        return "<p>No architecture-specific reports were generated.</p>" if grouped.empty?
+
+        rows = grouped.sort_by { |arch, _runs| arch.to_s }.map do |arch, runs|
+          slug = slugify(arch.to_s)
+          [
+            arch,
+            runs.length,
+            runs.flat_map { |entry| runtime_labels(entry.fetch("metadata")) }.uniq.join(", "),
+            link("open", "architectures/#{slug}/index.html")
+          ]
+        end
+
+        table(["Architecture", "Runs", "Runtime profiles", "Report"], rows)
+      end
+
+      def data_links(href_prefix: "")
         <<~HTML
           <ul>
-            <li>#{link("Combined run metadata and summary JSON", "data/runs.json")}</li>
-            <li>#{link("Combined summary CSV", "data/summary.csv")}</li>
+            <li>#{link("Combined run metadata and summary JSON", "#{href_prefix}data/runs.json")}</li>
+            <li>#{link("Combined summary CSV", "#{href_prefix}data/summary.csv")}</li>
+          </ul>
+        HTML
+      end
+
+      def write_architecture_reports(entries)
+        grouped = entries.group_by { |entry| entry.fetch("metadata")["machine_arch"] || "unknown" }
+        return if grouped.empty?
+
+        FileUtils.mkdir_p(File.join(output_dir, "architectures"))
+        FileUtils.mkdir_p(File.join(output_dir, "data", "architectures"))
+
+        grouped.each do |arch, arch_entries|
+          slug = slugify(arch.to_s)
+          arch_dir = File.join(output_dir, "architectures", slug)
+          FileUtils.mkdir_p(arch_dir)
+
+          write_architecture_json(slug, arch, arch_entries)
+          write_architecture_csv(slug, arch_entries)
+          write_architecture_index(arch_dir, arch, slug, arch_entries)
+        end
+      end
+
+      def write_architecture_json(slug, arch, entries)
+        payload = {
+          "generated_at" => Time.now.utc.iso8601,
+          "architecture" => arch,
+          "runs" => entries.map { |entry| run_payload(entry) },
+          "summary" => entries.flat_map { |entry| summary_payload(entry) }
+        }
+
+        File.write(File.join(output_dir, "data", "architectures", "#{slug}.json"), "#{JSON.pretty_generate(payload)}\n")
+      end
+
+      def write_architecture_csv(slug, entries)
+        columns = %w[
+          site_run_slug
+          site_report_href
+          created_at
+          benchmark_suite
+          benchmark_axis
+          machine_arch
+          machine_os
+          runner_label
+        ] + Report::SUMMARY_COLUMNS
+
+        CSV.open(File.join(output_dir, "data", "architectures", "#{slug}.summary.csv"), "w") do |csv|
+          csv << columns
+          entries.each do |entry|
+            metadata = entry.fetch("metadata")
+            entry.fetch("summary").each do |row|
+              prefix = {
+                "site_run_slug" => entry.fetch("slug"),
+                "site_report_href" => entry.fetch("report_href"),
+                "created_at" => metadata["created_at"],
+                "benchmark_suite" => metadata["benchmark_suite"],
+                "benchmark_axis" => metadata["benchmark_axis"],
+                "machine_arch" => metadata["machine_arch"],
+                "machine_os" => metadata["machine_os"],
+                "runner_label" => metadata["runner_label"]
+              }
+
+              csv << columns.map { |column| prefix.fetch(column, row[column]) }
+            end
+          end
+        end
+      end
+
+      def write_architecture_index(arch_dir, arch, slug, entries)
+        html = []
+        html << "<!doctype html>"
+        html << "<html lang=\"en\">"
+        html << "<head>"
+        html << "<meta charset=\"utf-8\">"
+        html << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        html << "<title>#{h(title)} #{h(arch)}</title>"
+        html << "<style>#{css}</style>"
+        html << "</head>"
+        html << "<body>"
+        html << "<main>"
+        html << "<section class=\"hero\">"
+        html << "<p class=\"eyebrow\">Architecture benchmark report</p>"
+        html << "<h1>#{h(arch)} #{h(title)}</h1>"
+        html << "<p>Aggregated Puma and Raptor benchmark runs for one machine architecture. This page keeps YJIT-off and YJIT-on runs together so architecture-level comparisons do not require stitching separate matrix artifacts by hand.</p>"
+        html << "</section>"
+        html << section("Runs", runs_table(entries, href_prefix: "../../"))
+        html << section("Adapter Medians", medians_table(entries, href_prefix: "../../"))
+        html << section("Architecture Data", architecture_data_links(slug))
+        html << "</main>"
+        html << "</body>"
+        html << "</html>"
+
+        File.write(File.join(arch_dir, "index.html"), "#{html.join("\n")}\n")
+      end
+
+      def architecture_data_links(slug)
+        <<~HTML
+          <ul>
+            <li>#{link("Architecture run metadata and summary JSON", "../../data/architectures/#{slug}.json")}</li>
+            <li>#{link("Architecture summary CSV", "../../data/architectures/#{slug}.summary.csv")}</li>
+            <li>#{link("All architecture reports", "../../index.html")}</li>
           </ul>
         HTML
       end
@@ -276,6 +396,7 @@ module Raptor
       def references
         <<~HTML
           <ul>
+            <li>#{link("Puma local benchmarks", "https://github.com/puma/puma/tree/main/benchmarks/local")} for the response-time, long-tail, and sleep/fibonacci benchmark shapes.</li>
             <li>#{link("speed.ruby-lang.org", "https://speed.ruby-lang.org/")} and #{link("Shopify yjit-metrics", "https://github.com/Shopify/yjit-metrics")} for the static-data-plus-site model.</li>
             <li>#{link("ruby-bench", "https://github.com/ruby/ruby-bench")} for warmup-aware Ruby and YJIT benchmark harnesses.</li>
             <li>#{link("Speedshop app-server sizing", "https://www.speedshop.co/blog/appserver/")}, #{link("GVL scaling", "https://www.speedshop.co/blog/the-ruby-gvl-and-scaling/")}, #{link("malloc memory", "https://www.speedshop.co/blog/malloc-doubles-ruby-memory/")}, and #{link("GC.stat", "https://www.speedshop.co/blog/a-guide-to-gc-stat/")} for server, CPU, memory, and GC interpretation.</li>

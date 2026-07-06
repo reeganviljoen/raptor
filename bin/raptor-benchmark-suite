@@ -9,11 +9,19 @@ require "raptor/simulation"
 module Raptor
   module Simulation
     class BenchmarkSuiteCLI
-      SCENARIOS = %w[tiny cpu io mixed allocation json erb large upload].freeze
+      PUMA_RESPONSE_SCENARIOS = Configuration.puma_response_body_scenarios.keys.freeze
+      PUMA_LONG_TAIL_SCENARIOS = Configuration.puma_long_tail_scenarios.keys.freeze
+      PUMA_SLEEP_FIBONACCI_SCENARIOS = Configuration.puma_sleep_fibonacci_scenarios.keys.freeze
+      SMOKE_SCENARIOS = %w[
+        puma-response-string-1kb
+        puma-long-tail-fib-200ms-x1p0
+        puma-sleep-fibonacci-5ms
+      ].freeze
+      SCENARIOS = (PUMA_RESPONSE_SCENARIOS + PUMA_LONG_TAIL_SCENARIOS + PUMA_SLEEP_FIBONACCI_SCENARIOS).freeze
       SUITES = {
         "smoke" => {
           profile: "quick",
-          scenarios: %w[tiny cpu json erb],
+          scenarios: SMOKE_SCENARIOS,
           runtimes: %w[yjit-off yjit-on],
           requests: 20,
           warmup_requests: 5,
@@ -118,7 +126,8 @@ module Raptor
           opts.on("--[no-]site", "Build the static benchmark site after the suite") { |value| set_option(:build_site, value) }
           opts.on("--list", "List benchmark suites and scenarios") do
             puts "suites: #{SUITES.keys.join(", ")}"
-            puts "scenarios: #{SCENARIOS.join(", ")}"
+            puts "suite scenarios: #{SCENARIOS.join(", ")}"
+            puts "all scenarios: #{Configuration.scenario_names.join(", ")}"
             puts "runtimes: #{Configuration.runtime_names.join(", ")}"
             exit
           end
@@ -141,10 +150,16 @@ module Raptor
           raise ArgumentError, "unknown benchmark suite #{@options.fetch(:suite).inspect}; choose one of #{SUITES.keys.join(", ")}"
         end
 
-        suite.merge(@explicit.slice(:profile, :requests, :warmup_requests, :concurrency, :repeats, :sample_interval)).merge(
+        suite.merge(explicit_suite_overrides).merge(
           runtimes: @options[:runtimes].empty? ? suite.fetch(:runtimes) : @options[:runtimes],
           scenarios: @options[:scenarios].empty? ? suite.fetch(:scenarios) : @options[:scenarios]
         )
+      end
+
+      def explicit_suite_overrides
+        %i[profile requests warmup_requests concurrency repeats sample_interval].each_with_object({}) do |name, overrides|
+          overrides[name] = @options[name] if @explicit[name]
+        end
       end
 
       def scenarios(settings)

@@ -28,7 +28,7 @@ Run one tiny smoke case:
 bundle exec ruby bin/raptor-simulate --scenario tiny --requests 20 --warmup-requests 5 --concurrency 2
 ```
 
-Run the broader local matrix:
+Run the broader local matrix with the legacy ad hoc scenarios:
 
 ```sh
 bundle exec ruby bin/raptor-simulate --profile full --repeat 5 --requests 1000 --warmup-requests 200 --concurrency 16
@@ -55,23 +55,23 @@ Artifacts are written under `tmp/simulations/<run-id>/` by default:
 - `report.md`: a human-readable summary table and caveats.
 - `report.html`: a self-contained offline report with comparison tables and inline SVG graphs.
 - `<runtime>/<scenario>/<server>/repeat-N/result.json`: per-case measurement detail.
-- `<runtime>/<scenario>/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs.
+- `<runtime>/_servers/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs for the server process reused across that runtime/profile/repeat scenario matrix.
 - `config.ru`: the exact generated Rack workload used for both servers.
 
 Open `report.html` directly in a browser to inspect the offline tables and graphs. When multiple runtimes are selected, the report keeps `yjit-off` and `yjit-on` as separate table rows and chart series.
 
 ## Profiles
 
-`quick` starts one Raptor process with one Ractor worker and one single-process Puma server with five request threads. It is the default because it is fast enough for local iteration.
+`quick` starts one Raptor process with five Ractor workers and one single-process Puma server with five request threads. It is the default because it is fast enough for local iteration while keeping both adapters at the same request-slot capacity.
 
 `full` uses the logical CPU count `N`:
 
-- Raptor with `1`, `N`, and `2N` Ractor workers.
-- Puma single-process with five threads.
-- Puma cluster with `N` workers and one thread.
-- Puma cluster with `N` workers and five threads.
+- Puma single-process with one thread, matched by Raptor with one Ractor.
+- Puma single-process with five threads, matched by Raptor with five Ractors.
+- Puma cluster with `N` workers and one thread, matched by Raptor with `N` Ractors.
+- Puma cluster with `N` workers and five threads, matched by Raptor with `5N` Ractors.
 
-These modes describe equivalent intent, not identical mechanics. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
+These modes describe equivalent request-slot capacity, not identical mechanics. Puma capacity is counted as `(workers > 0 ? workers : 1) * threads`; Raptor capacity is its Ractor count. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
 
 ## Runtime Profiles
 
@@ -86,15 +86,17 @@ Runtime profiles apply to the Puma and Raptor server processes. The load generat
 
 Local Puma/Raptor YJIT runs are exploratory. They are useful for finding cases worth investigating, for checking that reports keep YJIT-off and YJIT-on rows separate, and for watching how the generated Rack scenarios behave under the same harness. They should not be read as authoritative YJIT speedup or slowdown claims.
 
-YJIT can appear slower in this harness even when it would win in a longer or better-isolated benchmark:
+YJIT can still appear slower in this harness even when it would win in a longer or better-isolated benchmark:
 
-- The spawned server starts cold for each measured case, so compilation cost can be visible in the result.
+- The spawned server starts once for each runtime/profile/repeat, so the scenario matrix is warmer than a case-per-process harness, but early scenarios can still include compilation cost.
 - Warmup requests may not be enough for YJIT to reach steady-state code paths.
 - Short request counts and low repeat counts amplify startup, GC, scheduling, and sampling noise.
 - macOS local runs are noisy because background work, CPU frequency changes, thermal state, and platform-specific Ruby behavior can move small deltas around.
 - The built-in client and server form a closed-loop system in one local harness, so client pacing, connection reuse, server scheduling, and backpressure can hide or exaggerate runtime effects.
 
 Use the local harness to compare Raptor and Puma under the same generated workload, then validate any YJIT-specific conclusion against battle-tested Ruby benchmark suites. `ruby-bench`, also reachable from the old `yjit-bench` paths, includes YJIT-oriented runs and warmup-aware harnesses. Shopify's `yjit-metrics` collects YJIT speed and internal statistics, powers `speed.ruby-lang.org`, and documents the care needed for benchmark accuracy, especially on macOS.
+
+For scheduled benchmark data, prefer `bin/raptor-benchmark-suite`. Its defaults are Puma-derived rather than local-only scenarios.
 
 ## Scenarios
 
@@ -107,6 +109,9 @@ Use the local harness to compare Raptor and Puma under the same generated worklo
 - `erb`: ERB template rendering.
 - `large`: 64 KiB response body.
 - `upload`: 64 KiB POST body.
+- `puma-response-<type>-<size>kb`: Puma `response_time_wrk` response-body shape using the `Body-Conf` header.
+- `puma-long-tail-fib-200ms-x<multiplier>`: Puma long-tail pressure shape using the `/sleep0.2` sleep/fibonacci app contract.
+- `puma-sleep-fibonacci-<delay>ms`: Puma `sleep_fibonacci_test` shape using ten serial calls to selected `/sleep<delay>` routes.
 
 Every server runs the same generated `config.ru`, including `/__health__` for readiness and `/__metrics__` for Ruby/GC metadata.
 
@@ -139,6 +144,10 @@ Puma cluster GC metrics are intentionally conservative. A normal HTTP `/__metric
 - Speedshop Ruby memory and malloc arenas: https://www.speedshop.co/blog/malloc-doubles-ruby-memory/
 - Speedshop GC.stat guide: https://www.speedshop.co/blog/a-guide-to-gc-stat/
 - Puma docs: https://puma.io/puma/
+- Puma local benchmarks: https://github.com/puma/puma/tree/main/benchmarks/local
+- Puma response benchmark app: https://github.com/puma/puma/blob/main/test/rackup/ci_select.ru
+- Puma sleep/fibonacci benchmark app: https://github.com/puma/puma/blob/main/test/rackup/sleep_fibonacci.ru
+- Puma sleep/fibonacci benchmark runner: https://github.com/puma/puma/blob/main/benchmarks/local/sleep_fibonacci_test.rb
 - Ruby Ractor docs: https://docs.ruby-lang.org/en/master/Ractor.html
 - ruby-bench / yjit-bench: https://github.com/ruby/ruby-bench
 - Shopify yjit-metrics: https://github.com/Shopify/yjit-metrics

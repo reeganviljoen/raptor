@@ -136,7 +136,7 @@ module Raptor
 
       def scenarios
         all = Configuration.scenarios
-        names = @options[:scenarios].empty? ? all.keys : @options[:scenarios]
+        names = @options[:scenarios].empty? ? Configuration.legacy_scenario_names : @options[:scenarios]
 
         names.map do |name|
           all.fetch(name) { raise ArgumentError, "unknown scenario #{name.inspect}; choose one of #{all.keys.join(", ")}" }

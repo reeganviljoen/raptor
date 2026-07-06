@@ -12,7 +12,11 @@ module Raptor
         runtime
         yjit
         scenario
+        scenario_family
+        benchmark_source
+        benchmark_source_url
         server
+        server_capacity
         adapter
         workers
         threads
@@ -78,16 +82,26 @@ module Raptor
           end
           lines << ""
         end
+        lines << "## Benchmark Source Coverage"
+        lines << ""
+        lines << "| family | source | scenarios | runtimes |"
+        lines << "| --- | --- | ---: | --- |"
+        source_coverage(rows).each do |row|
+          lines << "| #{row.fetch("family")} | #{row.fetch("source")} | #{row.fetch("scenarios")} | #{row.fetch("runtimes").join(", ")} |"
+        end
+        lines << ""
         lines << "## Summary"
         lines << ""
-        lines << "| runtime | scenario | server | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
-        lines << "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        lines << "| runtime | scenario | source | server | capacity | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
+        lines << "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
 
         rows.each do |row|
           lines << [
             row.fetch("runtime", "default"),
             row.fetch("scenario"),
+            row.fetch("benchmark_source", "raptor-generated"),
             row.fetch("server"),
+            row.fetch("server_capacity", "n/a"),
             row.fetch("completed"),
             row.fetch("errors"),
             row.fetch("achieved_rps"),
@@ -130,6 +144,7 @@ module Raptor
         html << "</section>"
         html << section("Environment", environment_table(metadata))
         html << section("Benchmark Quality Warnings", quality_warnings_table(metadata))
+        html << section("Benchmark Source Coverage", source_coverage_table(rows))
         html << section("Adapter Comparison", adapter_table(adapter_rows))
         html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Best median requests/sec", higher_is_better: true))
         html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest median p99 latency (ms)", higher_is_better: false))
@@ -171,7 +186,8 @@ module Raptor
           "Repeats" => metadata["repeats"],
           "Keep alive" => metadata["keep_alive"],
           "Runtime profiles" => Array(metadata["runtime_profiles"]).map { |profile| profile["label"] || profile["name"] }.join(", "),
-          "Scenarios" => Array(metadata["scenarios"]).join(", ")
+          "Scenarios" => Array(metadata["scenarios"]).join(", "),
+          "Benchmark sources" => Array(metadata["benchmark_sources"]).map { |source| source["label"] || source["source"] }.compact.uniq.join(", ")
         }
 
         table(["Item", "Value"], rows.map { |name, value| [name, value] })
@@ -193,8 +209,40 @@ module Raptor
         )
       end
 
+      def source_coverage(rows)
+        rows.group_by { |row| [row["scenario_family"] || "ad hoc", row["benchmark_source"] || "raptor-generated"] }.map do |(family, source), group|
+          {
+            "family" => family,
+            "source" => source,
+            "scenarios" => group.map { |row| row["scenario"] }.uniq.length,
+            "runtimes" => group.map { |row| row["runtime"] || "default" }.uniq.sort,
+            "adapters" => group.map { |row| row["adapter"] }.uniq.sort,
+            "runs" => group.length
+          }
+        end.sort_by { |row| row["family"].to_s }
+      end
+
+      def source_coverage_table(rows)
+        coverage = source_coverage(rows)
+        return "<p>No measured benchmark rows were recorded.</p>" if coverage.empty?
+
+        table(
+          ["Family", "Source", "Scenarios", "Runtimes", "Adapters", "Rows"],
+          coverage.map do |row|
+            [
+              row["family"],
+              row["source"],
+              row["scenarios"],
+              row["runtimes"].join(", "),
+              row["adapters"].join(", "),
+              row["runs"]
+            ]
+          end
+        )
+      end
+
       def adapter_summary(rows)
-        aggregate_repeat_rows(rows).group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default")] }.map do |(scenario, adapter, runtime), group|
+        aggregate_repeat_rows(rows).group_by { |row| [row.fetch("scenario"), row["scenario_family"], row["benchmark_source"], row.fetch("adapter"), row.fetch("runtime", "default"), row["server_capacity"]] }.map do |(scenario, family, source, adapter, runtime, capacity), group|
           rps_row = group.max_by { |row| numeric(row["achieved_rps_median"]) || -Float::INFINITY }
           p50_row = group.min_by { |row| numeric(row["p50_ms_median"]) || Float::INFINITY }
           p95_row = group.min_by { |row| numeric(row["p95_ms_median"]) || Float::INFINITY }
@@ -203,9 +251,12 @@ module Raptor
 
           {
             "scenario" => scenario,
+            "scenario_family" => family,
+            "benchmark_source" => source,
             "adapter" => adapter,
             "runtime" => runtime,
-            "series" => "#{adapter} #{runtime}",
+            "server_capacity" => capacity,
+            "series" => "#{adapter} #{runtime} #{capacity} slots",
             "best_rps" => rps_row && numeric(rps_row["achieved_rps_median"]),
             "best_rps_server" => rps_row && rps_row["server"],
             "lowest_p50_ms" => p50_row && numeric(p50_row["p50_ms_median"]),
@@ -220,15 +271,18 @@ module Raptor
             "completed" => group.sum { |row| Integer(row["completed"] || 0) },
             "errors" => group.sum { |row| Integer(row["errors"] || 0) }
           }
-        end.sort_by { |row| [scenario_index(row["scenario"], rows), row["adapter"].to_s, row["runtime"].to_s] }
+        end.sort_by { |row| [scenario_index(row["scenario"], rows), numeric(row["server_capacity"]) || 0, row["adapter"].to_s, row["runtime"].to_s] }
       end
 
       def adapter_table(rows)
         table(
           [
             "Scenario",
+            "Family",
+            "Source",
             "Adapter",
             "Runtime",
+            "Capacity",
             "Best median RPS",
             "RPS profile",
             "Lowest median p50",
@@ -246,8 +300,11 @@ module Raptor
           rows.map do |row|
             [
               row["scenario"],
+              row["scenario_family"],
+              row["benchmark_source"],
               row["adapter"],
               row["runtime"],
+              row["server_capacity"],
               format_number(row["best_rps"]),
               row["best_rps_server"],
               format_number(row["lowest_p50_ms"]),
@@ -267,12 +324,15 @@ module Raptor
       end
 
       def aggregate_repeat_rows(rows)
-        rows.group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default"), row.fetch("server")] }.map do |(scenario, adapter, runtime, server), group|
+        rows.group_by { |row| [row.fetch("scenario"), row["scenario_family"], row["benchmark_source"], row.fetch("adapter"), row.fetch("runtime", "default"), row.fetch("server"), row["server_capacity"]] }.map do |(scenario, family, source, adapter, runtime, server, capacity), group|
           {
             "scenario" => scenario,
+            "scenario_family" => family,
+            "benchmark_source" => source,
             "adapter" => adapter,
             "runtime" => runtime,
             "server" => server,
+            "server_capacity" => capacity,
             "runs" => group.length,
             "achieved_rps_median" => median(group.map { |row| numeric(row["achieved_rps"]) }.compact),
             "p50_ms_median" => median(group.map { |row| numeric(row["p50_ms"]) }.compact),
@@ -287,13 +347,16 @@ module Raptor
 
       def raw_rows_table(rows)
         table(
-          ["Runtime", "YJIT", "Scenario", "Server", "Adapter", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
+          ["Runtime", "YJIT", "Scenario", "Family", "Source", "Server", "Capacity", "Adapter", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
           rows.sort_by { |row| [row["runtime"].to_s, row["scenario"].to_s, row["server"].to_s] }.map do |row|
             [
               row["runtime"],
               row["yjit"],
               row["scenario"],
+              row["scenario_family"],
+              row["benchmark_source"],
               row["server"],
+              row["server_capacity"],
               row["adapter"],
               row["completed"],
               row["errors"],
@@ -406,7 +469,7 @@ module Raptor
             <li>Warmup requests are discarded from latency and throughput numbers.</li>
             <li>RSS and CPU charts depend on <code>ps</code>. If process sampling is unavailable, memory cells may be blank.</li>
             <li>Puma cluster GC deltas are intentionally blank in summary columns because a normal HTTP metrics probe samples one worker, not the full cluster.</li>
-            <li>Adapter comparison tables and charts aggregate repeats by server/runtime/scenario first, then compare medians across server profiles.</li>
+            <li>Adapter comparison tables and charts aggregate repeats by server/runtime/scenario/capacity first, then present Puma and Raptor rows within the same request-slot capacity groups.</li>
             <li>Use raw absolute numbers first. Percentage deltas only make sense beside latency, throughput, RSS, CPU, errors, and workload context.</li>
           </ul>
         HTML
@@ -453,10 +516,10 @@ module Raptor
 
       def series_color(series_name)
         case series_name
-        when "raptor yjit-off" then "#2f7f73"
-        when "raptor yjit-on" then "#53a99b"
-        when "puma yjit-off" then "#b45c2b"
-        when "puma yjit-on" then "#d88848"
+        when /\Araptor yjit-off/ then "#2f7f73"
+        when /\Araptor yjit-on/ then "#53a99b"
+        when /\Apuma yjit-off/ then "#b45c2b"
+        when /\Apuma yjit-on/ then "#d88848"
         when /raptor/ then "#2f7f73"
         when /puma/ then "#b45c2b"
         else "#687386"

@@ -33,7 +33,7 @@ Raptor is designed to make Ractor tradeoffs visible. It should not smooth over e
 - Per-worker metrics: accepts, active connections, requests, bytes in/out, app latency, read latency, write latency, keep-alive counts, errors, GC stats, and worker boot time.
 - Accept-model comparison: current shared listener, master acceptor dispatching sockets to workers, and per-worker listeners with `SO_REUSEPORT` where available.
 - Rack compliance mode using `Rack::Lint`.
-- Benchmark matrix: the local simulation harness now covers CPU-bound app, IO-bound app, tiny response, large response, upload-heavy request, keep-alive on/off, and worker counts of 1, N, and 2N. Slow-client, constant-rate, and long memory-soak modes still need to be added.
+- Benchmark matrix: the benchmark-suite layer now uses Puma-derived response-body, long-tail, and serial sleep/fibonacci scenarios, while the local simulation command keeps the older generated CPU, IO, tiny, large, and upload endpoints for ad hoc debugging. Slow-client, constant-rate, and long memory-soak modes still need to be added.
 - Lifecycle experiments: crash a worker, observe it with `Ractor#monitor`, restart it, and record throughput impact.
 - App-loading experiments: per-Ractor `rackup`, shareable `app_factory`, preloaded immutable/shareable setup, and common framework boot costs.
 
