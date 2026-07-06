@@ -18,6 +18,10 @@ require_relative "workload"
 module Raptor
   module Simulation
     class Runner
+      MIN_YJIT_REQUESTS = 1_000
+      MIN_YJIT_WARMUP_REQUESTS = 1_000
+      MIN_BENCHMARK_REPEATS = 3
+
       attr_reader :profiles, :runtime_profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
                   :output_root, :keep_alive, :timeout, :sample_interval
 
@@ -251,9 +255,68 @@ module Raptor
           "warmup_requests" => warmup_requests,
           "repeats" => repeats,
           "keep_alive" => keep_alive,
+          "quality_warnings" => quality_warnings,
           "runtime_profiles" => runtime_profiles.map(&:to_h),
           "profiles" => profiles.map(&:to_h),
           "scenarios" => scenarios.map(&:name)
+        }
+      end
+
+      def quality_warnings
+        warnings = [
+          warning(
+            "closed_loop_client",
+            "caution",
+            "This harness uses a closed-loop Ruby Net::HTTP client. Confirm production tail-latency claims with a constant-rate load tool."
+          )
+        ]
+
+        if repeats < MIN_BENCHMARK_REPEATS
+          warnings << warning(
+            "low_repeats",
+            "warning",
+            "This run has #{repeats} repeat(s) per case. Use at least #{MIN_BENCHMARK_REPEATS} repeats before treating deltas as stable."
+          )
+        end
+
+        if yjit_runtime_profile?
+          if warmup_requests < MIN_YJIT_WARMUP_REQUESTS
+            warnings << warning(
+              "short_yjit_warmup",
+              "warning",
+              "YJIT comparisons need enough warmup for compilation effects to settle. Use at least #{MIN_YJIT_WARMUP_REQUESTS} warmup requests per case."
+            )
+          end
+
+          if requests < MIN_YJIT_REQUESTS
+            warnings << warning(
+              "short_yjit_measurement",
+              "warning",
+              "This YJIT measurement uses #{requests} request(s) per case. Use at least #{MIN_YJIT_REQUESTS} measured requests per case for comparison runs."
+            )
+          end
+
+          if RUBY_PLATFORM.include?("darwin")
+            warnings << warning(
+              "macos_yjit_noise",
+              "caution",
+              "macOS developer machines can hide small YJIT deltas behind CPU scaling and background noise. Treat differences below a few percent as exploratory."
+            )
+          end
+        end
+
+        warnings
+      end
+
+      def yjit_runtime_profile?
+        runtime_profiles.any? { |profile| [true, false].include?(profile.yjit) }
+      end
+
+      def warning(code, severity, message)
+        {
+          "code" => code,
+          "severity" => severity,
+          "message" => message
         }
       end
 

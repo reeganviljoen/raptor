@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "raptor/simulation"
+require "raptor/simulation/cli"
 
 class SimulationTest < Minitest::Test
   def test_percentile_summary_interpolates_tail_values
@@ -44,6 +45,27 @@ class SimulationTest < Minitest::Test
     assert_equal [false, true], runtimes.map(&:yjit)
   end
 
+  def test_runtime_all_expands_to_yjit_on_and_off
+    runtimes = Raptor::Simulation::Configuration.runtimes(["all"])
+
+    assert_equal %w[yjit-off yjit-on], runtimes.map(&:label)
+  end
+
+  def test_yjit_preset_applies_benchmark_defaults_without_overriding_explicit_values
+    cli = Raptor::Simulation::CLI.new(%w[--preset yjit --profile quick --requests 4])
+
+    cli.send(:parse!)
+    cli.send(:apply_preset!)
+    options = cli.instance_variable_get(:@options)
+
+    assert_equal "quick", options[:profile]
+    assert_equal %w[yjit-off yjit-on], options[:runtimes]
+    assert_equal 4, options[:requests]
+    assert_equal 2_000, options[:warmup_requests]
+    assert_equal 5, options[:repeats]
+    assert_equal 0.25, options[:sample_interval]
+  end
+
   def test_workload_rackup_contains_required_probe_endpoints
     Dir.mktmpdir do |dir|
       rackup = Raptor::Simulation::Workload.write(dir)
@@ -74,6 +96,26 @@ class SimulationTest < Minitest::Test
     assert_nil delta.fetch("total_allocated_objects")
   end
 
+  def test_yjit_metadata_warns_about_short_comparison_runs
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [],
+      runtime_profiles: Raptor::Simulation::Configuration.runtimes(%w[yjit-off yjit-on]),
+      scenarios: [],
+      requests: 200,
+      concurrency: 8,
+      warmup_requests: 50,
+      repeats: 1
+    )
+
+    metadata = runner.send(:metadata, "test-run")
+    codes = metadata.fetch("quality_warnings").map { |warning| warning.fetch("code") }
+
+    assert_includes codes, "closed_loop_client"
+    assert_includes codes, "low_repeats"
+    assert_includes codes, "short_yjit_warmup"
+    assert_includes codes, "short_yjit_measurement"
+  end
+
   def test_simulation_command_is_not_packaged_without_puma_runtime_dependency
     spec = Gem::Specification.load(File.expand_path("../raptor.gemspec", __dir__))
 
@@ -101,6 +143,13 @@ class SimulationTest < Minitest::Test
         { "label" => "yjit-off", "yjit" => false },
         { "label" => "yjit-on", "yjit" => true }
       ],
+      "quality_warnings" => [
+        {
+          "code" => "short_yjit_warmup",
+          "severity" => "warning",
+          "message" => "YJIT comparisons need more warmup."
+        }
+      ],
       "scenarios" => ["tiny"]
     }
     rows = [
@@ -122,6 +171,8 @@ class SimulationTest < Minitest::Test
       assert_includes html, "puma-single-5t"
       assert_includes html, "yjit-on"
       assert_includes html, "yjit-off"
+      assert_includes html, "Benchmark Quality Warnings"
+      assert_includes html, "short_yjit_warmup"
     end
   end
 

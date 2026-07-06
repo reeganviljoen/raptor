@@ -69,6 +69,15 @@ module Raptor
         lines << "- Puma: `#{metadata.fetch("puma_version")}`"
         lines << "- Raptor: `#{metadata.fetch("raptor_version")}`"
         lines << ""
+        quality_warnings = Array(metadata["quality_warnings"])
+        if quality_warnings.any?
+          lines << "## Benchmark Quality Warnings"
+          lines << ""
+          quality_warnings.each do |warning|
+            lines << "- **#{warning.fetch("severity", "caution")}** (`#{warning.fetch("code", "benchmark_quality")}`): #{warning.fetch("message")}"
+          end
+          lines << ""
+        end
         lines << "## Summary"
         lines << ""
         lines << "| runtime | scenario | server | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
@@ -120,6 +129,7 @@ module Raptor
         html << "<p>Run <code>#{h(metadata.fetch("run_id"))}</code> compared Puma and Raptor against the same generated Rack workload. All charts are inline SVG and this file is safe to open offline.</p>"
         html << "</section>"
         html << section("Environment", environment_table(metadata))
+        html << section("Benchmark Quality Warnings", quality_warnings_table(metadata))
         html << section("Adapter Comparison", adapter_table(adapter_rows))
         html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Achieved requests/sec", higher_is_better: true))
         html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest p99 latency (ms)", higher_is_better: false))
@@ -158,6 +168,22 @@ module Raptor
         }
 
         table(["Item", "Value"], rows.map { |name, value| [name, value] })
+      end
+
+      def quality_warnings_table(metadata)
+        warnings = Array(metadata["quality_warnings"])
+        return "<p>No automated benchmark quality warnings were recorded.</p>" if warnings.empty?
+
+        table(
+          ["Severity", "Code", "Message"],
+          warnings.map do |warning|
+            [
+              warning["severity"] || "caution",
+              warning["code"] || "benchmark_quality",
+              warning["message"]
+            ]
+          end
+        )
       end
 
       def adapter_summary(rows)

@@ -32,10 +32,16 @@ Run the broader local matrix:
 bundle exec ruby bin/raptor-simulate --profile full --repeat 5 --requests 1000 --warmup-requests 200 --concurrency 16
 ```
 
-Run the full matrix with explicit YJIT off/on variants:
+Run the full matrix with YJIT off/on runtime variants:
 
 ```sh
-bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 1 --requests 200 --warmup-requests 50 --concurrency 8
+bundle exec ruby bin/raptor-simulate --preset yjit
+```
+
+The equivalent explicit spelling is:
+
+```sh
+bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 5 --requests 2000 --warmup-requests 2000 --concurrency 8 --sample-interval 0.25
 ```
 
 Artifacts are written under `tmp/simulations/<run-id>/` by default:
@@ -73,6 +79,20 @@ These modes describe equivalent intent, not identical mechanics. Puma workers ar
 - `all`: shorthand for `yjit-off` plus `yjit-on`.
 
 Runtime profiles apply to the Puma and Raptor server processes. The load generator still runs in the parent harness process.
+
+## YJIT Comparisons
+
+Local Puma/Raptor YJIT runs are exploratory. They are useful for finding cases worth investigating, for checking that reports keep YJIT-off and YJIT-on rows separate, and for watching how the generated Rack scenarios behave under the same harness. They should not be read as authoritative YJIT speedup or slowdown claims.
+
+YJIT can appear slower in this harness even when it would win in a longer or better-isolated benchmark:
+
+- The spawned server starts cold for each measured case, so compilation cost can be visible in the result.
+- Warmup requests may not be enough for YJIT to reach steady-state code paths.
+- Short request counts and low repeat counts amplify startup, GC, scheduling, and sampling noise.
+- macOS local runs are noisy because background work, CPU frequency changes, thermal state, and platform-specific Ruby behavior can move small deltas around.
+- The built-in client and server form a closed-loop system in one local harness, so client pacing, connection reuse, server scheduling, and backpressure can hide or exaggerate runtime effects.
+
+Use the local harness to compare Raptor and Puma under the same generated workload, then validate any YJIT-specific conclusion against battle-tested Ruby benchmark suites. `ruby-bench`, also reachable from the old `yjit-bench` paths, includes YJIT-oriented runs and warmup-aware harnesses. Shopify's `yjit-metrics` collects YJIT speed and internal statistics, powers `speed.ruby-lang.org`, and documents the care needed for benchmark accuracy, especially on macOS.
 
 ## Scenarios
 
@@ -116,3 +136,6 @@ Puma cluster GC metrics are intentionally conservative. A normal HTTP `/__metric
 - Speedshop GC.stat guide: https://www.speedshop.co/blog/a-guide-to-gc-stat/
 - Puma docs: https://puma.io/puma/
 - Ruby Ractor docs: https://docs.ruby-lang.org/en/master/Ractor.html
+- ruby-bench / yjit-bench: https://github.com/ruby/ruby-bench
+- Shopify yjit-metrics: https://github.com/Shopify/yjit-metrics
+- Ruby YJIT benchmark dashboard: https://speed.ruby-lang.org/

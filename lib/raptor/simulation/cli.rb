@@ -7,6 +7,16 @@ require_relative "../simulation"
 module Raptor
   module Simulation
     class CLI
+      YJIT_PRESET = {
+        profile: "full",
+        runtimes: %w[yjit-off yjit-on],
+        requests: 2_000,
+        concurrency: 8,
+        warmup_requests: 2_000,
+        repeats: 5,
+        sample_interval: 0.25
+      }.freeze
+
       def self.run(argv = ARGV)
         new(argv).run
       end
@@ -25,17 +35,21 @@ module Raptor
           keep_alive: true,
           timeout: 5,
           sample_interval: 0.5,
+          preset: nil,
           list: false
         }
+        @explicit = {}
       end
 
       def run
         parse!
+        apply_preset!
 
         if @options[:list]
           puts "profiles: quick, full"
           puts "scenarios: #{Configuration.scenario_names.join(", ")}"
           puts "runtimes: #{Configuration.runtime_names.join(", ")}"
+          puts "presets: yjit"
           return
         end
 
@@ -77,17 +91,18 @@ module Raptor
         parser = OptionParser.new do |opts|
           opts.banner = "Usage: raptor-simulate [options]"
 
-          opts.on("--profile NAME", "Simulation profile: quick or full") { |value| @options[:profile] = value }
+          opts.on("--preset NAME", "Benchmark preset: yjit") { |value| set_option(:preset, value) }
+          opts.on("--profile NAME", "Simulation profile: quick or full") { |value| set_option(:profile, value) }
           opts.on("--scenario NAME", "Scenario to include; repeatable") { |value| @options[:scenarios] << value }
-          opts.on("--runtime NAME", "Ruby runtime profile: default, yjit-off, yjit-on, or all; repeatable") { |value| @options[:runtimes] << value }
-          opts.on("--requests COUNT", Integer, "Measured requests per case") { |value| @options[:requests] = value }
-          opts.on("--concurrency COUNT", Integer, "Concurrent client threads") { |value| @options[:concurrency] = value }
-          opts.on("--warmup-requests COUNT", Integer, "Warmup requests per case") { |value| @options[:warmup_requests] = value }
-          opts.on("--repeat COUNT", Integer, "Repeats per case") { |value| @options[:repeats] = value }
-          opts.on("--output DIR", "Output directory root") { |value| @options[:output] = value }
-          opts.on("--timeout SECONDS", Float, "HTTP open/read timeout") { |value| @options[:timeout] = value }
-          opts.on("--sample-interval SECONDS", Float, "RSS/CPU sample interval") { |value| @options[:sample_interval] = value }
-          opts.on("--[no-]keep-alive", "Reuse HTTP connections inside each client thread") { |value| @options[:keep_alive] = value }
+          opts.on("--runtime NAME", "Ruby runtime profile: default, yjit-off, yjit-on, or all; repeatable") { |value| @options[:runtimes] << value; @explicit[:runtimes] = true }
+          opts.on("--requests COUNT", Integer, "Measured requests per case") { |value| set_option(:requests, value) }
+          opts.on("--concurrency COUNT", Integer, "Concurrent client threads") { |value| set_option(:concurrency, value) }
+          opts.on("--warmup-requests COUNT", Integer, "Warmup requests per case") { |value| set_option(:warmup_requests, value) }
+          opts.on("--repeat COUNT", Integer, "Repeats per case") { |value| set_option(:repeats, value) }
+          opts.on("--output DIR", "Output directory root") { |value| set_option(:output, value) }
+          opts.on("--timeout SECONDS", Float, "HTTP open/read timeout") { |value| set_option(:timeout, value) }
+          opts.on("--sample-interval SECONDS", Float, "RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--[no-]keep-alive", "Reuse HTTP connections inside each client thread") { |value| set_option(:keep_alive, value) }
           opts.on("--list", "List profiles and scenarios") { @options[:list] = true }
           opts.on("-h", "--help", "Print help") do
             puts opts
@@ -96,6 +111,27 @@ module Raptor
         end
 
         parser.parse!(@argv)
+      end
+
+      def set_option(name, value)
+        @options[name] = value
+        @explicit[name] = true
+      end
+
+      def apply_preset!
+        preset = @options[:preset]
+        return unless preset
+
+        case preset
+        when "yjit"
+          YJIT_PRESET.each do |name, value|
+            next if @explicit[name]
+
+            @options[name] = value
+          end
+        else
+          raise ArgumentError, "unknown preset #{preset.inspect}; choose one of yjit"
+        end
       end
 
       def scenarios
