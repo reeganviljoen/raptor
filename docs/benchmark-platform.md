@@ -65,18 +65,18 @@ The older generated scenarios (`tiny`, `cpu`, `json`, `erb`, and friends) remain
 
 ## GitHub Actions
 
-`.github/workflows/benchmarks.yml` provides a manual and weekly scheduled benchmark workflow.
+`.github/workflows/benchmarks.yml` provides a benchmark workflow that runs after merges to `main`, on a weekly schedule, and on manual dispatch. Merged pull requests are captured by the `push` event on `main`, so the dashboard records the benchmark for the merge commit rather than an unmerged PR head.
 
 The benchmark matrix runs one job per architecture:
 
 - `x64` on `ubuntu-24.04`
 - `arm64` on `ubuntu-24.04-arm`
 
-Each matrix job runs both `yjit-off` and `yjit-on` for both Puma and Raptor, and writes a single run report for that architecture. The Pages job downloads the architecture artifacts, merges them into a benchmark-history cache, builds the static dashboard, writes one aggregate report per machine architecture under `architectures/<arch>/index.html`, and deploys the dashboard with GitHub Pages.
+Each matrix job runs both `yjit-off` and `yjit-on` for both Puma and Raptor, and writes a single run report for that architecture. The Pages job downloads the architecture artifacts, merges them into the durable `benchmark-history` branch, builds the static dashboard, writes one aggregate report per machine architecture under `architectures/<arch>/index.html`, and deploys the dashboard with GitHub Pages.
 
-Manual runs can choose `smoke`, `standard`, or `full`, and can disable Pages deployment while still producing downloadable artifacts.
+Merge and scheduled runs use the `standard` suite by default. Manual runs can choose `smoke`, `standard`, or `full`, and can disable Pages deployment while still producing downloadable artifacts.
 
-GitHub Pages must be configured to use GitHub Actions as the source. The workflow uses the official Pages artifact/deploy flow, so the deploy job needs `pages: write` and `id-token: write`.
+GitHub Pages must be configured to use GitHub Actions as the source. The workflow uses the official Pages artifact/deploy flow, so the deploy job needs `pages: write`, `id-token: write`, and `contents: write` so it can push the updated `benchmark-history` branch before deploying the rendered dashboard.
 
 ## Reading Results
 

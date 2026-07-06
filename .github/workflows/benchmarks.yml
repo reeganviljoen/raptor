@@ -1,6 +1,9 @@
 name: Benchmarks
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       suite:
@@ -79,7 +82,7 @@ jobs:
     needs: benchmark
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       pages: write
       id-token: write
       actions: read
@@ -96,13 +99,23 @@ jobs:
           ruby-version: "4.0"
           bundler-cache: true
 
-      - name: Restore benchmark history cache
-        uses: actions/cache/restore@v4
-        with:
-          path: tmp/raptor-benchmark-history
-          key: raptor-benchmarks-${{ github.run_id }}
-          restore-keys: |
-            raptor-benchmarks-
+      - name: Restore benchmark history branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf tmp/raptor-benchmark-history
+          if git ls-remote --exit-code --heads origin benchmark-history >/dev/null 2>&1; then
+            git clone \
+              --depth 1 \
+              --branch benchmark-history \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+              tmp/raptor-benchmark-history
+          else
+            mkdir -p tmp/raptor-benchmark-history
+            git -C tmp/raptor-benchmark-history init
+            git -C tmp/raptor-benchmark-history checkout -b benchmark-history
+            git -C tmp/raptor-benchmark-history remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          fi
 
       - name: Download benchmark artifacts
         uses: actions/download-artifact@v4
@@ -127,11 +140,17 @@ jobs:
           --output public
           --title "Raptor Puma/Ruby Benchmarks"
 
-      - name: Save benchmark history cache
-        uses: actions/cache/save@v4
-        with:
-          path: tmp/raptor-benchmark-history
-          key: raptor-benchmarks-${{ github.run_id }}
+      - name: Persist benchmark history branch
+        run: |
+          git -C tmp/raptor-benchmark-history config user.name "github-actions[bot]"
+          git -C tmp/raptor-benchmark-history config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tmp/raptor-benchmark-history add -A
+          if git -C tmp/raptor-benchmark-history diff --cached --quiet; then
+            echo "No benchmark history changes to commit."
+          else
+            git -C tmp/raptor-benchmark-history commit -m "Record benchmark ${GITHUB_SHA}"
+            git -C tmp/raptor-benchmark-history push origin HEAD:benchmark-history
+          fi
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
