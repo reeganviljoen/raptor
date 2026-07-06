@@ -165,8 +165,7 @@ module Raptor
             source_url: "#{PUMA_BENCHMARK_BASE}/long_tail_hey.rb",
             delay_s: PUMA_LONG_TAIL_DELAY,
             concurrency_multiplier: multiplier,
-            requests_per_connection: PUMA_LONG_TAIL_REQUESTS_PER_CONNECTION,
-            warmup_requests: 0
+            requests_per_connection: PUMA_LONG_TAIL_REQUESTS_PER_CONNECTION
           )
         end
       end
@@ -183,8 +182,7 @@ module Raptor
             source_url: "#{PUMA_BENCHMARK_BASE}/sleep_fibonacci_test.rb",
             delay_s: delay,
             concurrency: 1,
-            requests: PUMA_SLEEP_FIBONACCI_REPEATS,
-            warmup_requests: 0
+            requests: PUMA_SLEEP_FIBONACCI_REPEATS
           )
         end
       end

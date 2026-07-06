@@ -8,9 +8,9 @@ require_relative "percentiles"
 module Raptor
   module Simulation
     class LoadGenerator
-      attr_reader :host, :port, :scenario, :requests, :concurrency, :timeout, :keep_alive
+      attr_reader :host, :port, :scenario, :requests, :concurrency, :timeout, :keep_alive, :min_duration_s
 
-      def initialize(host:, port:, scenario:, requests:, concurrency:, timeout: 5, keep_alive: true)
+      def initialize(host:, port:, scenario:, requests:, concurrency:, timeout: 5, keep_alive: true, min_duration_s: 0)
         @host = host
         @port = port
         @scenario = scenario
@@ -18,18 +18,20 @@ module Raptor
         @concurrency = [Integer(concurrency), 1].max
         @timeout = timeout
         @keep_alive = keep_alive
+        @min_duration_s = [Float(min_duration_s), 0.0].max
       end
 
       def run
         state = State.new
         started_at = monotonic
+        deadline = min_duration_s.positive? ? started_at + min_duration_s : nil
 
         distribute_requests.map do |count|
-          Thread.new { run_worker(count, state) }
+          Thread.new { run_worker(count, state, deadline) }
         end.each(&:join)
 
         finished_at = monotonic
-        state.to_result(started_at, finished_at)
+        state.to_result(started_at, finished_at, requests, min_duration_s)
       end
 
       private
@@ -52,11 +54,13 @@ module Raptor
           @mutex.synchronize { errors[error.class.name] += 1 }
         end
 
-        def to_result(started_at, finished_at)
+        def to_result(started_at, finished_at, target_requests, min_duration_s)
           completed = status_counts.values.sum
           duration_s = finished_at - started_at
 
           {
+            "target_requests" => target_requests,
+            "min_duration_s" => min_duration_s,
             "requests" => completed + errors.values.sum,
             "completed" => completed,
             "errors" => errors.transform_keys(&:to_s),
@@ -96,19 +100,38 @@ module Raptor
         base = requests / concurrency
         remainder = requests % concurrency
 
-        Array.new(concurrency) { |index| base + (index < remainder ? 1 : 0) }.reject(&:zero?)
+        counts = Array.new(concurrency) { |index| base + (index < remainder ? 1 : 0) }
+        min_duration_s.positive? ? counts : counts.reject(&:zero?)
       end
 
-      def run_worker(count, state)
+      def run_worker(count, state, deadline)
         remaining = count
 
         if keep_alive
-          with_http { |http| count.times { request_once(http, state); remaining -= 1 } }
+          with_http { |http| remaining = request_until_done(http, state, remaining, deadline) }
         else
-          count.times { with_http { |http| request_once(http, state); remaining -= 1 } }
+          remaining = request_until_done_without_keep_alive(state, remaining, deadline)
         end
       rescue StandardError => error
         remaining.times { state.record_error(error) }
+      end
+
+      def request_until_done(http, state, remaining, deadline)
+        while remaining.positive? || before_deadline?(deadline)
+          request_once(http, state)
+          remaining -= 1 if remaining.positive?
+        end
+
+        remaining
+      end
+
+      def request_until_done_without_keep_alive(state, remaining, deadline)
+        while remaining.positive? || before_deadline?(deadline)
+          with_http { |http| request_once(http, state) }
+          remaining -= 1 if remaining.positive?
+        end
+
+        remaining
       end
 
       def with_http
@@ -138,6 +161,10 @@ module Raptor
 
       def monotonic
         Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+
+      def before_deadline?(deadline)
+        deadline && monotonic < deadline
       end
     end
   end

@@ -23,11 +23,13 @@ module Raptor
           profile: "quick",
           scenarios: SMOKE_SCENARIOS,
           runtimes: %w[yjit-off yjit-on],
-          requests: 20,
-          warmup_requests: 5,
+          requests: 200,
+          warmup_requests: 100,
           concurrency: 2,
           repeats: 1,
-          sample_interval: 0.05
+          sample_interval: 0.25,
+          min_duration_s: 5.0,
+          warmup_duration_s: 2.0
         },
         "standard" => {
           profile: "full",
@@ -37,17 +39,21 @@ module Raptor
           warmup_requests: 1_000,
           concurrency: 8,
           repeats: 3,
-          sample_interval: 0.25
+          sample_interval: 0.5,
+          min_duration_s: 5.0,
+          warmup_duration_s: 2.0
         },
         "full" => {
           profile: "full",
           scenarios: SCENARIOS,
           runtimes: %w[yjit-off yjit-on],
-          requests: 2_000,
+          requests: 5_000,
           warmup_requests: 2_000,
           concurrency: 8,
           repeats: 5,
-          sample_interval: 0.25
+          sample_interval: 0.5,
+          min_duration_s: 15.0,
+          warmup_duration_s: 5.0
         }
       }.freeze
 
@@ -87,7 +93,9 @@ module Raptor
             warmup_requests: settings.fetch(:warmup_requests),
             repeats: settings.fetch(:repeats),
             output_root: @options.fetch(:output),
-            sample_interval: settings.fetch(:sample_interval)
+            sample_interval: settings.fetch(:sample_interval),
+            min_duration_s: settings.fetch(:min_duration_s),
+            warmup_duration_s: settings.fetch(:warmup_duration_s)
           ).run
 
           puts "benchmark suite: #{@options.fetch(:suite)}"
@@ -117,6 +125,8 @@ module Raptor
           opts.on("--concurrency COUNT", Integer, "Override client concurrency") { |value| set_option(:concurrency, value) }
           opts.on("--repeat COUNT", Integer, "Override repeats per case") { |value| set_option(:repeats, value) }
           opts.on("--sample-interval SECONDS", Float, "Override RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--min-duration SECONDS", Float, "Minimum measured seconds per case") { |value| set_option(:min_duration_s, value) }
+          opts.on("--warmup-duration SECONDS", Float, "Minimum warmup seconds per case") { |value| set_option(:warmup_duration_s, value) }
           opts.on("--output DIR", "Benchmark output root") { |value| set_option(:output, value) }
           opts.on("--site-output DIR", "Static site output directory") { |value| set_option(:site, value) }
           opts.on("--arch NAME", "Architecture label for metadata") { |value| set_option(:arch, value) }
@@ -157,7 +167,7 @@ module Raptor
       end
 
       def explicit_suite_overrides
-        %i[profile requests warmup_requests concurrency repeats sample_interval].each_with_object({}) do |name, overrides|
+        %i[profile requests warmup_requests concurrency repeats sample_interval min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
           overrides[name] = @options[name] if @explicit[name]
         end
       end

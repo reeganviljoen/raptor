@@ -21,6 +21,13 @@ module Raptor
         workers
         threads
         requests
+        target_requests
+        duration_s
+        min_duration_s
+        target_warmup_requests
+        warmup_requests
+        warmup_duration_s
+        warmup_min_duration_s
         concurrency
         keep_alive
         completed
@@ -92,8 +99,8 @@ module Raptor
         lines << ""
         lines << "## Summary"
         lines << ""
-        lines << "| runtime | scenario | source | server | capacity | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
-        lines << "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        lines << "| runtime | scenario | source | server | capacity | duration s | warmup s | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
+        lines << "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
 
         rows.each do |row|
           lines << [
@@ -102,6 +109,8 @@ module Raptor
             row.fetch("benchmark_source", "raptor-generated"),
             row.fetch("server"),
             row.fetch("server_capacity", "n/a"),
+            row.fetch("duration_s", "n/a"),
+            row.fetch("warmup_duration_s", "n/a"),
             row.fetch("completed"),
             row.fetch("errors"),
             row.fetch("achieved_rps"),
@@ -182,6 +191,8 @@ module Raptor
           "GitHub run" => metadata["github_run_id"],
           "Requests per case" => metadata["requests"],
           "Warmup requests" => metadata["warmup_requests"],
+          "Minimum measured duration" => metadata["min_duration_s"],
+          "Minimum warmup duration" => metadata["warmup_duration_s"],
           "Concurrency" => metadata["concurrency"],
           "Repeats" => metadata["repeats"],
           "Keep alive" => metadata["keep_alive"],
@@ -347,7 +358,7 @@ module Raptor
 
       def raw_rows_table(rows)
         table(
-          ["Runtime", "YJIT", "Scenario", "Family", "Source", "Server", "Capacity", "Adapter", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
+          ["Runtime", "YJIT", "Scenario", "Family", "Source", "Server", "Capacity", "Adapter", "Requests", "Target", "Duration s", "Warmup s", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
           rows.sort_by { |row| [row["runtime"].to_s, row["scenario"].to_s, row["server"].to_s] }.map do |row|
             [
               row["runtime"],
@@ -358,6 +369,10 @@ module Raptor
               row["server"],
               row["server_capacity"],
               row["adapter"],
+              row["requests"],
+              row["target_requests"],
+              format_number(row["duration_s"]),
+              format_number(row["warmup_duration_s"]),
               row["completed"],
               row["errors"],
               format_number(row["achieved_rps"]),

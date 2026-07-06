@@ -14,7 +14,9 @@ module Raptor
         concurrency: 8,
         warmup_requests: 2_000,
         repeats: 5,
-        sample_interval: 0.25
+        sample_interval: 0.25,
+        min_duration_s: 5.0,
+        warmup_duration_s: 2.0
       }.freeze
 
       def self.run(argv = ARGV)
@@ -35,6 +37,8 @@ module Raptor
           keep_alive: true,
           timeout: 5,
           sample_interval: 0.5,
+          min_duration_s: 0.0,
+          warmup_duration_s: 0.0,
           preset: nil,
           list: false
         }
@@ -65,7 +69,9 @@ module Raptor
           output_root: @options[:output],
           keep_alive: @options[:keep_alive],
           timeout: @options[:timeout],
-          sample_interval: @options[:sample_interval]
+          sample_interval: @options[:sample_interval],
+          min_duration_s: @options[:min_duration_s],
+          warmup_duration_s: @options[:warmup_duration_s]
         ).run
 
         puts "wrote #{result.fetch("output_dir")}"
@@ -102,6 +108,8 @@ module Raptor
           opts.on("--output DIR", "Output directory root") { |value| set_option(:output, value) }
           opts.on("--timeout SECONDS", Float, "HTTP open/read timeout") { |value| set_option(:timeout, value) }
           opts.on("--sample-interval SECONDS", Float, "RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
+          opts.on("--min-duration SECONDS", Float, "Minimum measured seconds per case") { |value| set_option(:min_duration_s, value) }
+          opts.on("--warmup-duration SECONDS", Float, "Minimum warmup seconds per case") { |value| set_option(:warmup_duration_s, value) }
           opts.on("--[no-]keep-alive", "Reuse HTTP connections inside each client thread") { |value| set_option(:keep_alive, value) }
           opts.on("--list", "List profiles and scenarios") { @options[:list] = true }
           opts.on("-h", "--help", "Print help") do

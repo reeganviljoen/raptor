@@ -43,7 +43,7 @@ bundle exec ruby bin/raptor-simulate --preset yjit
 The equivalent explicit spelling is:
 
 ```sh
-bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 5 --requests 2000 --warmup-requests 2000 --concurrency 8 --sample-interval 0.25
+bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 5 --requests 2000 --warmup-requests 2000 --concurrency 8 --min-duration 5 --warmup-duration 2 --sample-interval 0.25
 ```
 
 Artifacts are written under `tmp/simulations/<run-id>/` by default:
@@ -89,7 +89,8 @@ Local Puma/Raptor YJIT runs are exploratory. They are useful for finding cases w
 YJIT can still appear slower in this harness even when it would win in a longer or better-isolated benchmark:
 
 - The spawned server starts once for each runtime/profile/repeat, so the scenario matrix is warmer than a case-per-process harness, but early scenarios can still include compilation cost.
-- Warmup requests may not be enough for YJIT to reach steady-state code paths.
+- Warmup needs both enough requests and enough elapsed time for YJIT and GC effects to settle.
+- Fast endpoints should use `--min-duration` because request-count-only runs can finish before the runtime reaches a representative steady state.
 - Short request counts and low repeat counts amplify startup, GC, scheduling, and sampling noise.
 - macOS local runs are noisy because background work, CPU frequency changes, thermal state, and platform-specific Ruby behavior can move small deltas around.
 - The built-in client and server form a closed-loop system in one local harness, so client pacing, connection reuse, server scheduling, and backpressure can hide or exaggerate runtime effects.
@@ -124,7 +125,7 @@ Each measured case records:
 - Server process samples: total RSS, peak RSS, ending RSS, average CPU percent, and per-PID process rows where `ps` is available.
 - Ruby metrics: `/__metrics__` before and after the measured run, plus deltas for GC count, minor/major GC count, allocated/freed objects, heap slots, and malloc counters when Ruby exposes them. Deltas are flattened only when before/after probes hit the same worker. Puma cluster runs keep the raw sampled metrics but leave aggregate GC deltas blank until per-worker aggregation exists.
 
-Warmup requests run before measurement and are discarded.
+Warmup requests run before measurement and are discarded. `--warmup-duration` keeps sending warmup requests until the configured warmup seconds have elapsed, even if the warmup request floor has already been reached. `--min-duration` does the same for measured requests, so the configured request count is a floor rather than a cap.
 
 ## Caveats
 

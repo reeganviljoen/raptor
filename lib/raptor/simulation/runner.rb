@@ -21,13 +21,16 @@ module Raptor
     class Runner
       MIN_YJIT_REQUESTS = 1_000
       MIN_YJIT_WARMUP_REQUESTS = 1_000
+      MIN_YJIT_DURATION_S = 5.0
+      MIN_YJIT_WARMUP_DURATION_S = 2.0
       MIN_BENCHMARK_REPEATS = 3
 
       attr_reader :profiles, :runtime_profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
-                  :output_root, :keep_alive, :timeout, :sample_interval
+                  :output_root, :keep_alive, :timeout, :sample_interval, :min_duration_s, :warmup_duration_s
 
       def initialize(profiles:, scenarios:, requests:, concurrency:, warmup_requests:, runtime_profiles: nil, repeats: 1,
-                     output_root: "tmp/simulations", keep_alive: true, timeout: 5, sample_interval: 0.5)
+                     output_root: "tmp/simulations", keep_alive: true, timeout: 5, sample_interval: 0.5,
+                     min_duration_s: 0, warmup_duration_s: 0)
         @profiles = profiles
         @runtime_profiles = runtime_profiles || [Configuration.runtime("default")]
         @scenarios = scenarios
@@ -39,6 +42,8 @@ module Raptor
         @keep_alive = keep_alive
         @timeout = timeout
         @sample_interval = sample_interval
+        @min_duration_s = [Float(min_duration_s), 0.0].max
+        @warmup_duration_s = [Float(warmup_duration_s), 0.0].max
       end
 
       def run
@@ -98,9 +103,9 @@ module Raptor
         case_dir = File.join(output_dir, runtime_profile.label, scenario.name, profile.label, "repeat-#{repeat}")
         samples = []
 
-        before_metrics = fetch_metrics(server)
-        warmup(server, scenario)
+        warmup_result = warmup(server, scenario)
 
+        before_metrics = fetch_metrics(server)
         sampler = MemorySampler.new(server.pid, interval: sample_interval)
         sampler.start
         measurement = measured_load(server, scenario)
@@ -108,25 +113,26 @@ module Raptor
 
         after_metrics = fetch_metrics(server)
         samples = sampler.samples.map { |sample| sample.merge("run_id" => case_id, "runtime" => runtime_profile.label, "scenario" => scenario.name, "server" => profile.label) }
-        summary = summarize(case_id, runtime_profile, profile, scenario, measurement, sampler.summary, before_metrics, after_metrics)
+        summary = summarize(case_id, runtime_profile, profile, scenario, measurement, warmup_result, sampler.summary, before_metrics, after_metrics)
         FileUtils.mkdir_p(case_dir)
-        Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement))
+        Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement, "warmup" => warmup_result))
 
         { "summary" => summary, "samples" => samples }
       end
 
       def warmup(server, scenario)
-        count = case_warmup_requests(scenario)
-        return if count <= 0
+        count = case_warmup_requests(server.profile, scenario)
+        return empty_load_result(count, warmup_duration_s) if count <= 0 && warmup_duration_s <= 0
 
         LoadGenerator.new(
           host: "127.0.0.1",
           port: server.port,
           scenario: scenario,
           requests: count,
-          concurrency: [case_concurrency(server.profile, scenario), count].min,
+          concurrency: case_warmup_concurrency(server.profile, scenario, count),
           timeout: timeout,
-          keep_alive: keep_alive
+          keep_alive: keep_alive,
+          min_duration_s: warmup_duration_s
         ).run
       end
 
@@ -138,17 +144,19 @@ module Raptor
           requests: case_requests(server.profile, scenario),
           concurrency: case_concurrency(server.profile, scenario),
           timeout: timeout,
-          keep_alive: keep_alive
+          keep_alive: keep_alive,
+          min_duration_s: min_duration_s
         ).run
       end
 
-      def summarize(case_id, runtime_profile, profile, scenario, measurement, memory, before_metrics, after_metrics)
+      def summarize(case_id, runtime_profile, profile, scenario, measurement, warmup_result, memory, before_metrics, after_metrics)
         latency = measurement.fetch("latency_ms")
         gc_scope = gc_delta_scope(profile, before_metrics, after_metrics)
         gc_delta = gc_scope == "same_worker" ? gc_delta(before_metrics, after_metrics) : empty_gc_delta
         error_count = measurement.fetch("errors").values.sum
         measured_requests = case_requests(profile, scenario)
         measured_concurrency = case_concurrency(profile, scenario)
+        measured_warmup_requests = case_warmup_requests(profile, scenario)
 
         {
           "run_id" => case_id,
@@ -163,7 +171,14 @@ module Raptor
           "adapter" => profile.adapter,
           "workers" => profile.workers,
           "threads" => profile.threads,
-          "requests" => measured_requests,
+          "target_requests" => measured_requests,
+          "requests" => measurement.fetch("requests", measured_requests),
+          "duration_s" => measurement["duration_s"],
+          "min_duration_s" => min_duration_s,
+          "target_warmup_requests" => measured_warmup_requests,
+          "warmup_requests" => warmup_result.fetch("requests", measured_warmup_requests),
+          "warmup_duration_s" => warmup_result["duration_s"],
+          "warmup_min_duration_s" => warmup_duration_s,
           "concurrency" => measured_concurrency,
           "keep_alive" => keep_alive,
           "completed" => measurement.fetch("completed"),
@@ -196,10 +211,33 @@ module Raptor
         requests
       end
 
-      def case_warmup_requests(scenario)
+      def case_warmup_requests(profile, scenario)
         return Integer(scenario.warmup_requests) if scenario.warmup_requests
 
-        warmup_requests
+        [warmup_requests, case_requests(profile, scenario)].min
+      end
+
+      def case_warmup_concurrency(profile, scenario, warmup_count)
+        target_concurrency = case_concurrency(profile, scenario)
+        return target_concurrency if warmup_duration_s.positive?
+
+        [target_concurrency, warmup_count].min
+      end
+
+      def empty_load_result(target_requests, min_duration)
+        {
+          "target_requests" => target_requests,
+          "min_duration_s" => min_duration,
+          "requests" => 0,
+          "completed" => 0,
+          "errors" => {},
+          "status_counts" => {},
+          "bytes" => 0,
+          "duration_s" => 0.0,
+          "achieved_rps" => 0.0,
+          "latency_ms" => Percentiles.summarize([]),
+          "histogram_ms" => {}
+        }
       end
 
       def case_concurrency(profile, scenario)
@@ -297,6 +335,8 @@ module Raptor
           "requests" => requests,
           "concurrency" => concurrency,
           "warmup_requests" => warmup_requests,
+          "min_duration_s" => min_duration_s,
+          "warmup_duration_s" => warmup_duration_s,
           "repeats" => repeats,
           "keep_alive" => keep_alive,
           "quality_warnings" => quality_warnings,
@@ -335,19 +375,19 @@ module Raptor
         end
 
         if yjit_runtime_profile?
-          if warmup_requests < MIN_YJIT_WARMUP_REQUESTS
+          if warmup_requests < MIN_YJIT_WARMUP_REQUESTS && warmup_duration_s < MIN_YJIT_WARMUP_DURATION_S
             warnings << warning(
               "short_yjit_warmup",
               "warning",
-              "YJIT comparisons need enough warmup for compilation effects to settle. Use at least #{MIN_YJIT_WARMUP_REQUESTS} warmup requests per case."
+              "YJIT comparisons need enough warmup for compilation effects to settle. Use at least #{MIN_YJIT_WARMUP_REQUESTS} warmup requests or #{format_duration(MIN_YJIT_WARMUP_DURATION_S)} of warmup per case."
             )
           end
 
-          if requests < MIN_YJIT_REQUESTS
+          if requests < MIN_YJIT_REQUESTS && min_duration_s < MIN_YJIT_DURATION_S
             warnings << warning(
               "short_yjit_measurement",
               "warning",
-              "This YJIT measurement uses #{requests} request(s) per case. Use at least #{MIN_YJIT_REQUESTS} measured requests per case for comparison runs."
+              "This YJIT measurement uses #{requests} request(s) and a #{format_duration(min_duration_s)} minimum duration per case. Use at least #{MIN_YJIT_REQUESTS} measured requests or #{format_duration(MIN_YJIT_DURATION_S)} per case for comparison runs."
             )
           end
 
@@ -361,6 +401,10 @@ module Raptor
         end
 
         warnings
+      end
+
+      def format_duration(value)
+        value.to_i == value ? "#{value.to_i}s" : "#{value}s"
       end
 
       def yjit_runtime_profile?

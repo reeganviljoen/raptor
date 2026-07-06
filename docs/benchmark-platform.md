@@ -31,9 +31,11 @@ bundle exec ruby bin/raptor-benchmark-site \
 
 The suite runner supports three presets. The benchmark suites now use Puma's own local benchmark shapes instead of project-specific app scenarios:
 
-- `smoke`: quick local signal, `quick` profile, one scenario from each Puma-derived benchmark family, YJIT off/on, 20 measured requests, 5 warmup requests, one repeat.
-- `standard`: scheduled CI signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, 1,000 measured requests, 1,000 warmup requests, three repeats.
-- `full`: heavier release-quality signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, 2,000 measured requests, 2,000 warmup requests, five repeats.
+- `smoke`: local signal, `quick` profile, one scenario from each Puma-derived benchmark family, YJIT off/on, at least 200 measured requests or 5 measured seconds, at least 100 warmup requests or 2 warmup seconds, one repeat.
+- `standard`: scheduled CI signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, at least 1,000 measured requests or 5 measured seconds, at least 1,000 warmup requests or 2 warmup seconds, three repeats.
+- `full`: heavier release-quality signal, `full` profile, all Puma-derived benchmark families, YJIT off/on, at least 5,000 measured requests or 15 measured seconds, at least 2,000 warmup requests or 5 warmup seconds, five repeats.
+
+Measured request counts are floors, not caps. Fast cases keep issuing requests until the minimum measured duration is reached. Warmup uses the lower of the suite warmup request floor and the case's measured request floor, then keeps issuing warmup requests until the minimum warmup duration is reached. That keeps serial slow scenarios from spending minutes on warmup while still giving fast endpoints enough elapsed warmup time. Reports include the actual measured duration, actual request count, target request floor, warmup duration, and configured duration floors.
 
 All suite profiles are capacity-matched. Puma capacity is `(workers > 0 ? workers : 1) * threads`; Raptor capacity is its Ractor count. The `full` profile creates Raptor profiles for every Puma capacity shape, including single-thread, single-process five-thread, `N x 1`, and `N x 5` Puma shapes. Report medians are grouped by scenario, runtime, adapter, and capacity so Puma and Raptor rows with the same request-slot count can be read side by side.
 
@@ -44,7 +46,9 @@ bundle exec ruby bin/raptor-benchmark-suite \
   --suite smoke \
   --runtime yjit-on \
   --axis local-arm64-yjit-on \
-  --arch arm64
+  --arch arm64 \
+  --min-duration 10 \
+  --warmup-duration 3
 ```
 
 ## Benchmark Scenarios
@@ -77,6 +81,7 @@ GitHub Pages must be configured to use GitHub Actions as the source. The workflo
 Treat local and GitHub-hosted runner results as trend signals, not final claims.
 
 - YJIT comparisons need warmup. Short runs can include cold compilation cost.
+- Prefer duration floors for fast endpoints; request counts alone can finish before Ruby, YJIT, GC, and server scheduling settle.
 - GitHub-hosted runners are convenient but noisy. Use dedicated, pinned machines before making release or marketing claims.
 - Compare absolute throughput, latency, memory, CPU, GC, and error data together.
 - App-server sizing should be interpreted through matched request-slot capacity, process count, thread count, memory, CPU, and copy-on-write behavior rather than a single RPS number.

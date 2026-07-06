@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "fileutils"
 require "json"
+require "socket"
 require "raptor/simulation"
 require "raptor/simulation/cli"
 
@@ -14,6 +15,49 @@ class SimulationTest < Minitest::Test
     assert_equal 3.85, summary["p95_ms"]
     assert_equal 3.97, summary["p99_ms"]
     assert_equal 4.0, summary["max_ms"]
+  end
+
+  def test_load_generator_treats_requests_as_floor_when_min_duration_is_set
+    server = TCPServer.new("127.0.0.1", 0)
+    handled = 0
+    mutex = Mutex.new
+
+    server_thread = Thread.new do
+      loop do
+        client = server.accept
+        begin
+          while (line = client.gets)
+            break if line == "\r\n"
+          end
+          body = "ok"
+          client.write("HTTP/1.1 200 OK\r\nContent-Length: #{body.bytesize}\r\nConnection: close\r\n\r\n#{body}")
+          mutex.synchronize { handled += 1 }
+        ensure
+          client.close
+        end
+      end
+    rescue IOError, Errno::EBADF
+      nil
+    end
+
+    scenario = Raptor::Simulation::Scenario.new(name: "tiny", path: "/tiny")
+    result = Raptor::Simulation::LoadGenerator.new(
+      host: "127.0.0.1",
+      port: server.addr[1],
+      scenario: scenario,
+      requests: 1,
+      concurrency: 2,
+      timeout: 1,
+      keep_alive: false,
+      min_duration_s: 0.2
+    ).run
+
+    assert_operator result.fetch("duration_s"), :>=, 0.18
+    assert_operator result.fetch("requests"), :>, 1
+    assert_operator mutex.synchronize { handled }, :>, 1
+  ensure
+    server&.close
+    server_thread&.join(1)
   end
 
   def test_process_tree_parses_ps_rows_and_finds_descendants
@@ -108,6 +152,8 @@ class SimulationTest < Minitest::Test
     assert_equal 2_000, options[:warmup_requests]
     assert_equal 5, options[:repeats]
     assert_equal 0.25, options[:sample_interval]
+    assert_equal 5.0, options[:min_duration_s]
+    assert_equal 2.0, options[:warmup_duration_s]
   end
 
   def test_workload_rackup_contains_required_probe_endpoints
@@ -142,10 +188,11 @@ class SimulationTest < Minitest::Test
 
     assert_equal 30, runner.send(:case_concurrency, profile, scenario)
     assert_equal 600, runner.send(:case_requests, profile, scenario)
-    assert_equal 0, runner.send(:case_warmup_requests, scenario)
+    assert_equal 100, runner.send(:case_warmup_requests, profile, scenario)
     assert_equal 10, profile.capacity
     assert_equal 1, runner.send(:case_concurrency, profile, serial_scenario)
     assert_equal 10, runner.send(:case_requests, profile, serial_scenario)
+    assert_equal 10, runner.send(:case_warmup_requests, profile, serial_scenario)
   end
 
   def test_runner_summary_records_matched_capacity_and_scaled_load
@@ -160,7 +207,9 @@ class SimulationTest < Minitest::Test
       scenarios: [scenario],
       requests: 1_000,
       concurrency: 2,
-      warmup_requests: 100
+      warmup_requests: 100,
+      min_duration_s: 5.0,
+      warmup_duration_s: 2.0
     )
 
     summaries = profiles.map do |profile|
@@ -171,6 +220,7 @@ class SimulationTest < Minitest::Test
         profile,
         scenario,
         measurement_payload,
+        warmup_payload,
         memory_payload,
         metrics_payload(1),
         metrics_payload(2)
@@ -180,7 +230,12 @@ class SimulationTest < Minitest::Test
     assert_equal ["raptor-5r", "puma-single-5t"], summaries.map { |row| row.fetch("server") }
     assert_equal [5, 5], summaries.map { |row| row.fetch("server_capacity") }
     assert_equal [8, 8], summaries.map { |row| row.fetch("concurrency") }
-    assert_equal [160, 160], summaries.map { |row| row.fetch("requests") }
+    assert_equal [172, 172], summaries.map { |row| row.fetch("requests") }
+    assert_equal [160, 160], summaries.map { |row| row.fetch("target_requests") }
+    assert_equal [5.0, 5.0], summaries.map { |row| row.fetch("min_duration_s") }
+    assert_equal [120, 120], summaries.map { |row| row.fetch("warmup_requests") }
+    assert_equal [100, 100], summaries.map { |row| row.fetch("target_warmup_requests") }
+    assert_equal [2.0, 2.0], summaries.map { |row| row.fetch("warmup_min_duration_s") }
     assert_equal ["puma/benchmarks/local/long_tail_hey + test/rackup/sleep_fibonacci"], summaries.map { |row| row.fetch("benchmark_source") }.uniq
   end
 
@@ -400,6 +455,13 @@ class SimulationTest < Minitest::Test
       "workers" => workers,
       "threads" => threads,
       "requests" => 10,
+      "target_requests" => 10,
+      "duration_s" => 1.0,
+      "min_duration_s" => 0.0,
+      "target_warmup_requests" => 2,
+      "warmup_requests" => 2,
+      "warmup_duration_s" => 0.1,
+      "warmup_min_duration_s" => 0.0,
       "concurrency" => 2,
       "keep_alive" => true,
       "completed" => 10,
@@ -440,9 +502,13 @@ class SimulationTest < Minitest::Test
 
   def measurement_payload
     {
-      "completed" => 160,
+      "target_requests" => 160,
+      "min_duration_s" => 5.0,
+      "requests" => 172,
+      "completed" => 172,
       "errors" => {},
-      "status_counts" => { "200" => 160 },
+      "status_counts" => { "200" => 172 },
+      "duration_s" => 5.25,
       "achieved_rps" => 100.0,
       "latency_ms" => {
         "p50_ms" => 1.0,
@@ -451,6 +517,21 @@ class SimulationTest < Minitest::Test
         "p999_ms" => 4.0,
         "max_ms" => 5.0
       }
+    }
+  end
+
+  def warmup_payload
+    {
+      "target_requests" => 100,
+      "min_duration_s" => 2.0,
+      "requests" => 120,
+      "completed" => 120,
+      "errors" => {},
+      "status_counts" => { "200" => 120 },
+      "duration_s" => 2.1,
+      "achieved_rps" => 57.143,
+      "latency_ms" => Raptor::Simulation::Percentiles.summarize([1.0]),
+      "histogram_ms" => { "5" => 1 }
     }
   end
 

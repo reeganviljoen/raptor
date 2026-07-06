@@ -42,7 +42,7 @@ Run the local comparison harness:
 bundle exec ruby bin/raptor-simulate
 ```
 
-It launches Puma and Raptor against the same generated Rack app, performs warmup requests, and writes latency percentiles, throughput, RSS/CPU samples, GC deltas, logs, JSON, CSV, NDJSON, and a Markdown report under `tmp/simulations/<run-id>/`.
+It launches Puma and Raptor against the same generated Rack app, performs warmup requests with optional warmup/measurement duration floors, and writes latency percentiles, throughput, RSS/CPU samples, GC deltas, logs, JSON, CSV, NDJSON, and reports under `tmp/simulations/<run-id>/`.
 
 Run the local benchmark suite and build the static dashboard:
 
