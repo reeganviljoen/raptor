@@ -9,10 +9,11 @@ require "timeout"
 module Raptor
   module Simulation
     class ServerProcess
-      attr_reader :profile, :rackup_path, :artifact_dir, :port, :pid, :stdout_path, :stderr_path
+      attr_reader :profile, :runtime_profile, :rackup_path, :artifact_dir, :port, :pid, :stdout_path, :stderr_path
 
-      def initialize(profile:, rackup_path:, artifact_dir:, host: "127.0.0.1")
+      def initialize(profile:, runtime_profile:, rackup_path:, artifact_dir:, host: "127.0.0.1")
         @profile = profile
+        @runtime_profile = runtime_profile
         @rackup_path = rackup_path
         @artifact_dir = artifact_dir
         @host = host
@@ -56,13 +57,14 @@ module Raptor
 
       def build_command
         bind = "tcp://#{@host}:#{port}"
+        ruby_command = [RbConfig.ruby, *runtime_profile.ruby_options]
 
         case profile.adapter.to_s
         when "raptor"
-          [RbConfig.ruby, File.join(project_root, "bin", "raptor"), "-q", "-b", bind, "-w", profile.workers.to_s, rackup_path]
+          [*ruby_command, File.join(project_root, "bin", "raptor"), "-q", "-b", bind, "-w", profile.workers.to_s, rackup_path]
         when "puma"
           puma = Gem.bin_path("puma", "puma")
-          command = [RbConfig.ruby, puma, "--no-config", "-q", "-b", bind]
+          command = [*ruby_command, puma, "--no-config", "-q", "-b", bind]
           command.concat(["-t", "#{profile.threads}:#{profile.threads}"]) if profile.threads
           command.concat(["-w", profile.workers.to_s]) if profile.workers.to_i.positive?
           command << rackup_path

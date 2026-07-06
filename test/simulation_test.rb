@@ -36,6 +36,14 @@ class SimulationTest < Minitest::Test
     assert_equal "puma-single-5t", profiles.last.label
   end
 
+  def test_runtime_profiles_can_select_yjit_on_and_off
+    runtimes = Raptor::Simulation::Configuration.runtimes(%w[yjit-off yjit-on])
+
+    assert_equal %w[yjit-off yjit-on], runtimes.map(&:label)
+    assert_equal [["--disable=yjit"], ["--yjit"]], runtimes.map(&:ruby_options)
+    assert_equal [false, true], runtimes.map(&:yjit)
+  end
+
   def test_workload_rackup_contains_required_probe_endpoints
     Dir.mktmpdir do |dir|
       rackup = Raptor::Simulation::Workload.write(dir)
@@ -89,11 +97,17 @@ class SimulationTest < Minitest::Test
       "concurrency" => 2,
       "repeats" => 1,
       "keep_alive" => true,
+      "runtime_profiles" => [
+        { "label" => "yjit-off", "yjit" => false },
+        { "label" => "yjit-on", "yjit" => true }
+      ],
       "scenarios" => ["tiny"]
     }
     rows = [
-      benchmark_row("tiny", "raptor-1r", "raptor", 1200.0, 1.2, 22.0),
-      benchmark_row("tiny", "puma-single-5t", "puma", 1400.0, 0.9, 30.0)
+      benchmark_row("yjit-off", "tiny", "raptor-1r", "raptor", 1200.0, 1.2, 22.0),
+      benchmark_row("yjit-on", "tiny", "raptor-1r", "raptor", 1300.0, 1.1, 24.0),
+      benchmark_row("yjit-off", "tiny", "puma-single-5t", "puma", 1400.0, 0.9, 30.0),
+      benchmark_row("yjit-on", "tiny", "puma-single-5t", "puma", 1500.0, 0.8, 33.0)
     ]
 
     Dir.mktmpdir do |dir|
@@ -106,14 +120,18 @@ class SimulationTest < Minitest::Test
       assert_includes html, "Puma vs Raptor Simulation"
       assert_includes html, "raptor-1r"
       assert_includes html, "puma-single-5t"
+      assert_includes html, "yjit-on"
+      assert_includes html, "yjit-off"
     end
   end
 
   private
 
-  def benchmark_row(scenario, server, adapter, rps, p99, rss)
+  def benchmark_row(runtime, scenario, server, adapter, rps, p99, rss)
     {
-      "run_id" => "#{scenario}/#{server}/repeat-1",
+      "run_id" => "#{runtime}/#{scenario}/#{server}/repeat-1",
+      "runtime" => runtime,
+      "yjit" => runtime == "yjit-on",
       "scenario" => scenario,
       "server" => server,
       "adapter" => adapter,

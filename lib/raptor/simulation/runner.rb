@@ -18,12 +18,13 @@ require_relative "workload"
 module Raptor
   module Simulation
     class Runner
-      attr_reader :profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
+      attr_reader :profiles, :runtime_profiles, :scenarios, :requests, :concurrency, :warmup_requests, :repeats,
                   :output_root, :keep_alive, :timeout, :sample_interval
 
-      def initialize(profiles:, scenarios:, requests:, concurrency:, warmup_requests:, repeats: 1,
+      def initialize(profiles:, scenarios:, requests:, concurrency:, warmup_requests:, runtime_profiles: nil, repeats: 1,
                      output_root: "tmp/simulations", keep_alive: true, timeout: 5, sample_interval: 0.5)
         @profiles = profiles
+        @runtime_profiles = runtime_profiles || [Configuration.runtime("default")]
         @scenarios = scenarios
         @requests = Integer(requests)
         @concurrency = Integer(concurrency)
@@ -48,12 +49,14 @@ module Raptor
           rackup_path = Workload.write(dir)
           FileUtils.cp(rackup_path, File.join(output_dir, "config.ru"))
 
-          profiles.each do |profile|
-            scenarios.each do |scenario|
-              repeats.times do |index|
-                result = run_case(output_dir, rackup_path, profile, scenario, index + 1)
-                summary_rows << result.fetch("summary")
-                sample_rows.concat(result.fetch("samples"))
+          runtime_profiles.each do |runtime_profile|
+            profiles.each do |profile|
+              scenarios.each do |scenario|
+                repeats.times do |index|
+                  result = run_case(output_dir, rackup_path, runtime_profile, profile, scenario, index + 1)
+                  summary_rows << result.fetch("summary")
+                  sample_rows.concat(result.fetch("samples"))
+                end
               end
             end
           end
@@ -77,10 +80,10 @@ module Raptor
 
       private
 
-      def run_case(output_dir, rackup_path, profile, scenario, repeat)
-        case_id = "#{scenario.name}/#{profile.label}/repeat-#{repeat}"
-        case_dir = File.join(output_dir, scenario.name, profile.label, "repeat-#{repeat}")
-        server = ServerProcess.new(profile: profile, rackup_path: rackup_path, artifact_dir: case_dir)
+      def run_case(output_dir, rackup_path, runtime_profile, profile, scenario, repeat)
+        case_id = "#{runtime_profile.label}/#{scenario.name}/#{profile.label}/repeat-#{repeat}"
+        case_dir = File.join(output_dir, runtime_profile.label, scenario.name, profile.label, "repeat-#{repeat}")
+        server = ServerProcess.new(profile: profile, runtime_profile: runtime_profile, rackup_path: rackup_path, artifact_dir: case_dir)
         samples = []
 
         server.start
@@ -93,8 +96,8 @@ module Raptor
         sampler.stop
 
         after_metrics = fetch_metrics(server)
-        samples = sampler.samples.map { |sample| sample.merge("run_id" => case_id, "scenario" => scenario.name, "server" => profile.label) }
-        summary = summarize(case_id, profile, scenario, measurement, sampler.summary, before_metrics, after_metrics)
+        samples = sampler.samples.map { |sample| sample.merge("run_id" => case_id, "runtime" => runtime_profile.label, "scenario" => scenario.name, "server" => profile.label) }
+        summary = summarize(case_id, runtime_profile, profile, scenario, measurement, sampler.summary, before_metrics, after_metrics)
         Report.write_json(File.join(case_dir, "result.json"), summary.merge("measurement" => measurement))
 
         { "summary" => summary, "samples" => samples }
@@ -128,7 +131,7 @@ module Raptor
         ).run
       end
 
-      def summarize(case_id, profile, scenario, measurement, memory, before_metrics, after_metrics)
+      def summarize(case_id, runtime_profile, profile, scenario, measurement, memory, before_metrics, after_metrics)
         latency = measurement.fetch("latency_ms")
         gc_scope = gc_delta_scope(profile, before_metrics, after_metrics)
         gc_delta = gc_scope == "same_worker" ? gc_delta(before_metrics, after_metrics) : empty_gc_delta
@@ -136,6 +139,8 @@ module Raptor
 
         {
           "run_id" => case_id,
+          "runtime" => runtime_profile.label,
+          "yjit" => runtime_profile.yjit,
           "scenario" => scenario.name,
           "server" => profile.label,
           "adapter" => profile.adapter,
@@ -246,6 +251,7 @@ module Raptor
           "warmup_requests" => warmup_requests,
           "repeats" => repeats,
           "keep_alive" => keep_alive,
+          "runtime_profiles" => runtime_profiles.map(&:to_h),
           "profiles" => profiles.map(&:to_h),
           "scenarios" => scenarios.map(&:name)
         }

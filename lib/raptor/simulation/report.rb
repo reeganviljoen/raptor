@@ -9,6 +9,8 @@ module Raptor
     module Report
       SUMMARY_COLUMNS = %w[
         run_id
+        runtime
+        yjit
         scenario
         server
         adapter
@@ -69,11 +71,12 @@ module Raptor
         lines << ""
         lines << "## Summary"
         lines << ""
-        lines << "| scenario | server | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
-        lines << "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        lines << "| runtime | scenario | server | completed | errors | rps | p50 ms | p95 ms | p99 ms | rss peak MB |"
+        lines << "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
 
         rows.each do |row|
           lines << [
+            row.fetch("runtime", "default"),
             row.fetch("scenario"),
             row.fetch("server"),
             row.fetch("completed"),
@@ -150,6 +153,7 @@ module Raptor
           "Concurrency" => metadata["concurrency"],
           "Repeats" => metadata["repeats"],
           "Keep alive" => metadata["keep_alive"],
+          "Runtime profiles" => Array(metadata["runtime_profiles"]).map { |profile| profile["label"] || profile["name"] }.join(", "),
           "Scenarios" => Array(metadata["scenarios"]).join(", ")
         }
 
@@ -157,7 +161,7 @@ module Raptor
       end
 
       def adapter_summary(rows)
-        rows.group_by { |row| [row.fetch("scenario"), row.fetch("adapter")] }.map do |(scenario, adapter), group|
+        rows.group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default")] }.map do |(scenario, adapter, runtime), group|
           rps_row = group.max_by { |row| numeric(row["achieved_rps"]) || -Float::INFINITY }
           p50_row = group.min_by { |row| numeric(row["p50_ms"]) || Float::INFINITY }
           p95_row = group.min_by { |row| numeric(row["p95_ms"]) || Float::INFINITY }
@@ -167,6 +171,8 @@ module Raptor
           {
             "scenario" => scenario,
             "adapter" => adapter,
+            "runtime" => runtime,
+            "series" => "#{adapter} #{runtime}",
             "best_rps" => rps_row && numeric(rps_row["achieved_rps"]),
             "best_rps_server" => rps_row && rps_row["server"],
             "lowest_p50_ms" => p50_row && numeric(p50_row["p50_ms"]),
@@ -180,16 +186,17 @@ module Raptor
             "completed" => group.sum { |row| Integer(row["completed"] || 0) },
             "errors" => group.sum { |row| Integer(row["errors"] || 0) }
           }
-        end.sort_by { |row| [scenario_index(row["scenario"], rows), row["adapter"].to_s] }
+        end.sort_by { |row| [scenario_index(row["scenario"], rows), row["adapter"].to_s, row["runtime"].to_s] }
       end
 
       def adapter_table(rows)
         table(
-          ["Scenario", "Adapter", "Best RPS", "RPS profile", "Lowest p50", "Lowest p95", "Lowest p99", "Lowest RSS MB", "Completed", "Errors"],
+          ["Scenario", "Adapter", "Runtime", "Best RPS", "RPS profile", "Lowest p50", "Lowest p95", "Lowest p99", "Lowest RSS MB", "Completed", "Errors"],
           rows.map do |row|
             [
               row["scenario"],
               row["adapter"],
+              row["runtime"],
               format_number(row["best_rps"]),
               row["best_rps_server"],
               format_number(row["lowest_p50_ms"]),
@@ -205,9 +212,11 @@ module Raptor
 
       def raw_rows_table(rows)
         table(
-          ["Scenario", "Server", "Adapter", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
-          rows.sort_by { |row| [row["scenario"].to_s, row["server"].to_s] }.map do |row|
+          ["Runtime", "YJIT", "Scenario", "Server", "Adapter", "Completed", "Errors", "RPS", "p50 ms", "p95 ms", "p99 ms", "p99.9 ms", "Peak RSS MB", "CPU avg", "GC scope"],
+          rows.sort_by { |row| [row["runtime"].to_s, row["scenario"].to_s, row["server"].to_s] }.map do |row|
             [
+              row["runtime"],
+              row["yjit"],
               row["scenario"],
               row["server"],
               row["adapter"],
@@ -229,13 +238,14 @@ module Raptor
       def sample_summary(samples)
         return "<p>No RSS samples were recorded.</p>" if samples.empty?
 
-        grouped = samples.group_by { |sample| [sample["scenario"], sample["server"]] }
+        grouped = samples.group_by { |sample| [sample["runtime"] || "default", sample["scenario"], sample["server"]] }
         table(
-          ["Scenario", "Server", "Samples", "Peak RSS MB", "Last RSS MB"],
-          grouped.map do |(scenario, server), group|
+          ["Runtime", "Scenario", "Server", "Samples", "Peak RSS MB", "Last RSS MB"],
+          grouped.map do |(runtime, scenario, server), group|
             available = group.select { |sample| sample["available"] }
             rss_values = available.map { |sample| numeric(sample["rss_kb_total"]) }.compact
             [
+              runtime,
               scenario,
               server,
               available.length,
@@ -248,12 +258,12 @@ module Raptor
 
       def grouped_bar_chart(rows, metric, label, higher_is_better:)
         scenarios = rows.map { |row| row["scenario"] }.uniq
-        adapters = rows.map { |row| row["adapter"] }.uniq.sort
-        values = rows.to_h { |row| [[row["scenario"], row["adapter"]], numeric(row[metric])] }
+        series = rows.map { |row| row["series"] }.uniq.sort
+        values = rows.to_h { |row| [[row["scenario"], row["series"]], numeric(row[metric])] }
         max = values.values.compact.max || 1.0
         max = 1.0 if max <= 0.0
 
-        width = [960, 170 + (scenarios.length * adapters.length * 42)].max
+        width = [960, 170 + (scenarios.length * series.length * 34)].max
         height = 360
         plot_left = 72
         plot_right = width - 28
@@ -262,7 +272,7 @@ module Raptor
         plot_width = plot_right - plot_left
         plot_height = plot_bottom - plot_top
         group_width = plot_width / [scenarios.length, 1].max.to_f
-        bar_width = [20, (group_width / ([adapters.length, 1].max + 1))].min
+        bar_width = [18, (group_width / ([series.length, 1].max + 1))].min
 
         svg = []
         svg << "<figure class=\"chart\">"
@@ -277,23 +287,23 @@ module Raptor
           center = plot_left + (group_width * scenario_index) + (group_width / 2.0)
           svg << "<text class=\"x-label\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 28}\" text-anchor=\"middle\">#{h(scenario)}</text>"
 
-          adapters.each_with_index do |adapter, adapter_index|
-            value = values[[scenario, adapter]]
+          series.each_with_index do |series_name, series_index|
+            value = values[[scenario, series_name]]
             next unless value
 
-            x = center - ((adapters.length * bar_width) / 2.0) + (adapter_index * bar_width)
+            x = center - ((series.length * bar_width) / 2.0) + (series_index * bar_width)
             bar_height = (value / max) * plot_height
             y = plot_bottom - bar_height
-            svg << "<rect class=\"bar #{h(adapter)}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{(bar_width - 4).round(2)}\" height=\"#{bar_height.round(2)}\">"
-            svg << "<title>#{h(scenario)} #{h(adapter)}: #{h(format_number(value))}</title>"
+            svg << "<rect class=\"bar\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{(bar_width - 4).round(2)}\" height=\"#{bar_height.round(2)}\">"
+            svg << "<title>#{h(scenario)} #{h(series_name)}: #{h(format_number(value))}</title>"
             svg << "</rect>"
           end
         end
 
-        adapters.each_with_index do |adapter, index|
-          x = plot_left + (index * 130)
-          svg << "<rect class=\"legend #{h(adapter)}\" x=\"#{x}\" y=\"#{height - 30}\" width=\"14\" height=\"14\" />"
-          svg << "<text class=\"legend-label\" x=\"#{x + 20}\" y=\"#{height - 18}\">#{h(adapter)}</text>"
+        series.each_with_index do |series_name, index|
+          x = plot_left + (index * 150)
+          svg << "<rect class=\"legend\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x}\" y=\"#{height - 30}\" width=\"14\" height=\"14\" />"
+          svg << "<text class=\"legend-label\" x=\"#{x + 20}\" y=\"#{height - 18}\">#{h(series_name)}</text>"
         end
 
         svg << "</svg>"
@@ -361,10 +371,20 @@ module Raptor
           svg { display: block; min-width: 820px; width: 100%; }
           .axis { stroke: #8c97a6; stroke-width: 1; }
           .tick, .x-label, .legend-label { fill: var(--muted); font-size: 12px; }
-          .bar.raptor, .legend.raptor { fill: var(--raptor); }
-          .bar.puma, .legend.puma { fill: var(--puma); }
           ul { max-width: 920px; padding-left: 20px; }
         CSS
+      end
+
+      def series_color(series_name)
+        case series_name
+        when "raptor yjit-off" then "#2f7f73"
+        when "raptor yjit-on" then "#53a99b"
+        when "puma yjit-off" then "#b45c2b"
+        when "puma yjit-on" then "#d88848"
+        when /raptor/ then "#2f7f73"
+        when /puma/ then "#b45c2b"
+        else "#687386"
+        end
       end
 
       def scenario_index(scenario, rows)

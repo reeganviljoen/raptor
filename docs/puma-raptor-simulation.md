@@ -32,6 +32,12 @@ Run the broader local matrix:
 bundle exec ruby bin/raptor-simulate --profile full --repeat 5 --requests 1000 --warmup-requests 200 --concurrency 16
 ```
 
+Run the full matrix with explicit YJIT off/on variants:
+
+```sh
+bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime yjit-on --repeat 1 --requests 200 --warmup-requests 50 --concurrency 8
+```
+
 Artifacts are written under `tmp/simulations/<run-id>/` by default:
 
 - `metadata.json`: Ruby, gem versions, git SHA, CPU count, allocator/YJIT hints, profile, scenario list, and run settings.
@@ -44,7 +50,7 @@ Artifacts are written under `tmp/simulations/<run-id>/` by default:
 - `<scenario>/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs.
 - `config.ru`: the exact generated Rack workload used for both servers.
 
-Open `report.html` directly in a browser to inspect the offline tables and graphs.
+Open `report.html` directly in a browser to inspect the offline tables and graphs. When multiple runtimes are selected, the report keeps `yjit-off` and `yjit-on` as separate table rows and chart series.
 
 ## Profiles
 
@@ -58,6 +64,15 @@ Open `report.html` directly in a browser to inspect the offline tables and graph
 - Puma cluster with `N` workers and five threads.
 
 These modes describe equivalent intent, not identical mechanics. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
+
+## Runtime Profiles
+
+- `default`: inherit Ruby's normal runtime settings for the spawned server.
+- `yjit-off`: start the spawned server with `--disable=yjit`.
+- `yjit-on`: start the spawned server with `--yjit`.
+- `all`: shorthand for `yjit-off` plus `yjit-on`.
+
+Runtime profiles apply to the Puma and Raptor server processes. The load generator still runs in the parent harness process.
 
 ## Scenarios
 

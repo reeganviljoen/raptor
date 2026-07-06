@@ -35,6 +35,26 @@ module Raptor
       end
     end
 
+    RuntimeProfile = Struct.new(:name, :ruby_options, :yjit, keyword_init: true) do
+      def initialize(**kwargs)
+        super
+        self.ruby_options ||= []
+      end
+
+      def label
+        name.to_s
+      end
+
+      def to_h
+        {
+          name: name,
+          label: label,
+          ruby_options: ruby_options,
+          yjit: yjit
+        }
+      end
+    end
+
     module Configuration
       module_function
 
@@ -83,6 +103,32 @@ module Raptor
 
       def scenario_names
         scenarios.keys
+      end
+
+      def runtime(name)
+        case name.to_s
+        when "default"
+          RuntimeProfile.new(name: "default", ruby_options: [], yjit: nil)
+        when "yjit-off"
+          RuntimeProfile.new(name: "yjit-off", ruby_options: ["--disable=yjit"], yjit: false)
+        when "yjit-on"
+          RuntimeProfile.new(name: "yjit-on", ruby_options: ["--yjit"], yjit: true)
+        else
+          raise ArgumentError, "unknown runtime profile: #{name.inspect}"
+        end
+      end
+
+      def runtimes(names)
+        names = Array(names)
+        return [runtime("default")] if names.empty?
+
+        names.flat_map do |name|
+          name.to_s == "all" ? [runtime("yjit-off"), runtime("yjit-on")] : runtime(name)
+        end
+      end
+
+      def runtime_names
+        %w[default yjit-off yjit-on all]
       end
     end
   end

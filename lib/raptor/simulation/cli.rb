@@ -16,6 +16,7 @@ module Raptor
         @options = {
           profile: "quick",
           scenarios: [],
+          runtimes: [],
           requests: 200,
           concurrency: 8,
           warmup_requests: 50,
@@ -34,12 +35,14 @@ module Raptor
         if @options[:list]
           puts "profiles: quick, full"
           puts "scenarios: #{Configuration.scenario_names.join(", ")}"
+          puts "runtimes: #{Configuration.runtime_names.join(", ")}"
           return
         end
 
         selected_scenarios = scenarios
         result = Runner.new(
           profiles: Configuration.profile(@options[:profile]),
+          runtime_profiles: Configuration.runtimes(@options[:runtimes]),
           scenarios: selected_scenarios,
           requests: @options[:requests],
           concurrency: @options[:concurrency],
@@ -56,7 +59,8 @@ module Raptor
         puts "summary:"
         result.fetch("summary").each do |row|
           puts format(
-            "%<scenario>-10s %<server>-24s rps=%<rps>8.2f p95=%<p95>8.3fms p99=%<p99>8.3fms rss=%<rss>8sMB",
+            "%<runtime>-9s %<scenario>-10s %<server>-24s rps=%<rps>8.2f p95=%<p95>8.3fms p99=%<p99>8.3fms rss=%<rss>8sMB",
+            runtime: row.fetch("runtime"),
             scenario: row.fetch("scenario"),
             server: row.fetch("server"),
             rps: row.fetch("achieved_rps"),
@@ -75,6 +79,7 @@ module Raptor
 
           opts.on("--profile NAME", "Simulation profile: quick or full") { |value| @options[:profile] = value }
           opts.on("--scenario NAME", "Scenario to include; repeatable") { |value| @options[:scenarios] << value }
+          opts.on("--runtime NAME", "Ruby runtime profile: default, yjit-off, yjit-on, or all; repeatable") { |value| @options[:runtimes] << value }
           opts.on("--requests COUNT", Integer, "Measured requests per case") { |value| @options[:requests] = value }
           opts.on("--concurrency COUNT", Integer, "Concurrent client threads") { |value| @options[:concurrency] = value }
           opts.on("--warmup-requests COUNT", Integer, "Warmup requests per case") { |value| @options[:warmup_requests] = value }
