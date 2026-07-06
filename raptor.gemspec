@@ -21,9 +21,11 @@ Gem::Specification.new do |spec|
     Dir["lib/**/*.rb", "exe/*", "bin/*", "README.md", "docs/**/*.md", "examples/**/*", "LICENSE.txt"]
   end
   spec.bindir = "exe"
-  spec.executables = ["raptor"]
+  spec.executables = ["raptor", "raptor-simulate"]
   spec.require_paths = ["lib"]
 
+  spec.add_dependency "csv", ">= 3.3", "< 4"
   spec.add_dependency "rack", ">= 3.0", "< 4"
   spec.add_development_dependency "minitest", ">= 5.0"
+  spec.add_development_dependency "puma", ">= 8.0", "< 9"
 end

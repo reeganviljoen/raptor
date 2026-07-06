@@ -33,7 +33,7 @@ Raptor is designed to make Ractor tradeoffs visible. It should not smooth over e
 - Per-worker metrics: accepts, active connections, requests, bytes in/out, app latency, read latency, write latency, keep-alive counts, errors, GC stats, and worker boot time.
 - Accept-model comparison: current shared listener, master acceptor dispatching sockets to workers, and per-worker listeners with `SO_REUSEPORT` where available.
 - Rack compliance mode using `Rack::Lint`.
-- Benchmark matrix: CPU-bound app, IO-bound app, tiny response, large response, upload-heavy request, slow client, keep-alive on/off, and worker counts of 1, N, and 2N.
+- Benchmark matrix: the local simulation harness now covers CPU-bound app, IO-bound app, tiny response, large response, upload-heavy request, keep-alive on/off, and worker counts of 1, N, and 2N. Slow-client, constant-rate, and long memory-soak modes still need to be added.
 - Lifecycle experiments: crash a worker, observe it with `Ractor#monitor`, restart it, and record throughput impact.
 - App-loading experiments: per-Ractor `rackup`, shareable `app_factory`, preloaded immutable/shareable setup, and common framework boot costs.
 
@@ -42,3 +42,4 @@ Raptor is designed to make Ractor tradeoffs visible. It should not smooth over e
 - Ruby Ractor docs: https://docs.ruby-lang.org/en/master/Ractor.html
 - Ruby 4.0.0 release notes: https://docs.ruby-lang.org/en/master/NEWS/NEWS-4_0_0_md.html
 - Rack specification: https://github.com/rack/rack/blob/main/SPEC.rdoc
+- Puma vs Raptor simulation harness: puma-raptor-simulation.md
