@@ -159,12 +159,14 @@ module Raptor
         html << section("Benchmark Quality Warnings", quality_warnings_table(metadata))
         html << section("Benchmark Source Coverage", source_coverage_table(rows))
         html << section("Adapter Comparison", adapter_table(adapter_rows))
+        html << section("Throughput And Latency", throughput_latency_notes)
         html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Best median requests/sec", higher_is_better: true))
         html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest median p99 latency (ms)", higher_is_better: false))
         html << section("Peak RSS By Scenario", grouped_bar_chart(adapter_rows, "lowest_rss_mb_peak", "Lowest median peak RSS (MB)", higher_is_better: false))
         html << section("All Measured Runs", raw_rows_table(rows))
         html << section("RSS Sample Coverage", sample_summary(samples))
         html << section("Caveats", caveats)
+        html << "<script>#{chart_toggle_script}</script>"
         html << "</main>"
         html << "</body>"
         html << "</html>"
@@ -340,6 +342,13 @@ module Raptor
         )
       end
 
+      def throughput_latency_notes
+        <<~HTML
+          <p>Throughput and latency measure related but different things. Throughput is completed requests per measured second, while latency percentiles describe only selected points in the request distribution. With a fixed closed-loop concurrency, a server can show better p50 or p95 latency and still have lower throughput if more time is spent in tail requests, scheduling, GC, process coordination, or other overhead that reduces total completions.</p>
+          <p>Use the raw rows when this happens: compare completed requests, measured duration, p50, p95, p99, p99.9, CPU, RSS, and errors together. A lower p50 with a worse p99 or fewer completions usually means the common case got faster but some request slots stayed occupied long enough to pull throughput down.</p>
+        HTML
+      end
+
       def aggregate_repeat_rows(rows)
         rows.group_by { |row| [row.fetch("scenario"), row["scenario_family"], row["benchmark_source"], row.fetch("adapter"), row.fetch("runtime", "default"), row.fetch("server"), row["server_capacity"]] }.map do |(scenario, family, source, adapter, runtime, server, capacity), group|
           {
@@ -436,17 +445,17 @@ module Raptor
         bar_width = [18, (group_width / ([series.length, 1].max + 1))].min
 
         svg = []
-        svg << "<figure class=\"chart\">"
+        svg << "<figure class=\"chart\" data-chart-toggle>"
         svg << "<figcaption>#{h(label)}. #{higher_is_better ? "Higher is better." : "Lower is better."}</figcaption>"
         svg << "<svg viewBox=\"0 0 #{width} #{height}\" role=\"img\" aria-label=\"#{h(label)} chart\">"
         svg << "<line class=\"axis\" x1=\"#{plot_left}\" y1=\"#{plot_bottom}\" x2=\"#{plot_right}\" y2=\"#{plot_bottom}\" />"
         svg << "<line class=\"axis\" x1=\"#{plot_left}\" y1=\"#{plot_top}\" x2=\"#{plot_left}\" y2=\"#{plot_bottom}\" />"
-        svg << "<text class=\"tick\" x=\"#{plot_left - 12}\" y=\"#{plot_top + 4}\" text-anchor=\"end\">#{h(format_number(max))}</text>"
+        svg << "<text class=\"tick\" data-axis-max x=\"#{plot_left - 12}\" y=\"#{plot_top + 4}\" text-anchor=\"end\">#{h(format_number(max))}</text>"
         svg << "<text class=\"tick\" x=\"#{plot_left - 12}\" y=\"#{plot_bottom + 4}\" text-anchor=\"end\">0</text>"
 
         scenarios.each_with_index do |scenario, scenario_index|
           center = plot_left + (group_width * scenario_index) + (group_width / 2.0)
-          svg << "<text class=\"x-label\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 28}\" text-anchor=\"middle\">#{h(scenario)}</text>"
+          svg << "<text class=\"x-label\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" data-scenario-label=\"#{h(scenario)}\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 28}\" text-anchor=\"middle\">#{h(scenario)}</text>"
 
           series.each_with_index do |series_name, series_index|
             value = values[[scenario, series_name]]
@@ -455,7 +464,7 @@ module Raptor
             x = center - ((series.length * bar_width) / 2.0) + (series_index * bar_width)
             bar_height = (value / max) * plot_height
             y = plot_bottom - bar_height
-            svg << "<rect class=\"bar\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{(bar_width - 4).round(2)}\" height=\"#{bar_height.round(2)}\">"
+            svg << "<rect class=\"bar\" role=\"button\" tabindex=\"0\" aria-pressed=\"true\" data-scenario=\"#{h(scenario)}\" data-series=\"#{h(series_name)}\" data-value=\"#{h(value)}\" data-plot-bottom=\"#{plot_bottom}\" data-plot-height=\"#{plot_height}\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{(bar_width - 4).round(2)}\" height=\"#{bar_height.round(2)}\">"
             svg << "<title>#{h(scenario)} #{h(series_name)}: #{h(format_number(value))}</title>"
             svg << "</rect>"
           end
@@ -463,8 +472,10 @@ module Raptor
 
         series.each_with_index do |series_name, index|
           x = plot_left + (index * 150)
+          svg << "<g class=\"legend-item\" role=\"button\" tabindex=\"0\" data-legend-series=\"#{h(series_name)}\" aria-pressed=\"true\">"
           svg << "<rect class=\"legend\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x}\" y=\"#{height - 30}\" width=\"14\" height=\"14\" />"
           svg << "<text class=\"legend-label\" x=\"#{x + 20}\" y=\"#{height - 18}\">#{h(series_name)}</text>"
+          svg << "</g>"
         end
 
         svg << "</svg>"
@@ -496,6 +507,119 @@ module Raptor
             <li>Use raw absolute numbers first. Percentage deltas only make sense beside latency, throughput, RSS, CPU, errors, and workload context.</li>
           </ul>
         HTML
+      end
+
+      def chart_toggle_script
+        <<~JS
+          (function () {
+            function number(value) {
+              var parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            function format(value) {
+              var parsed = number(value);
+              if (parsed === null) return "n/a";
+              return (Math.round(parsed * 1000) / 1000).toString();
+            }
+
+            function hiddenSet(chart) {
+              return new Set(String(chart.dataset.hiddenSeries || "").split("|").filter(Boolean));
+            }
+
+            function storeHidden(chart, hidden) {
+              chart.dataset.hiddenSeries = Array.from(hidden).join("|");
+            }
+
+            function bars(chart) {
+              return Array.prototype.slice.call(chart.querySelectorAll(".bar[data-series]"));
+            }
+
+            function maxValue(items) {
+              var values = items.map(function (bar) { return number(bar.dataset.value) || 0; });
+              var max = Math.max.apply(null, values);
+              return Number.isFinite(max) && max > 0 ? max : 1;
+            }
+
+            function sync(chart) {
+              var hidden = hiddenSet(chart);
+              var allBars = bars(chart);
+              var focusScenario = chart.dataset.focusScenario || "";
+              var visibleBars = allBars.filter(function (bar) {
+                return !hidden.has(bar.dataset.series) && (!focusScenario || bar.dataset.scenario === focusScenario);
+              });
+              var max = maxValue(visibleBars.length > 0 ? visibleBars : allBars);
+              var axisMax = chart.querySelector("[data-axis-max]");
+              if (axisMax) axisMax.textContent = format(max);
+
+              allBars.forEach(function (bar) {
+                var isHidden = hidden.has(bar.dataset.series) || (focusScenario && bar.dataset.scenario !== focusScenario);
+                var value = number(bar.dataset.value) || 0;
+                var bottom = number(bar.dataset.plotBottom) || 0;
+                var plotHeight = number(bar.dataset.plotHeight) || 0;
+                var height = isHidden ? 3 : (value / max) * plotHeight;
+                bar.setAttribute("y", format(bottom - height));
+                bar.setAttribute("height", format(height));
+                bar.classList.toggle("is-hidden", isHidden);
+                bar.setAttribute("aria-pressed", isHidden ? "false" : "true");
+              });
+
+              Array.prototype.slice.call(chart.querySelectorAll("[data-legend-series]")).forEach(function (legend) {
+                var isHidden = hidden.has(legend.dataset.legendSeries);
+                legend.classList.toggle("is-hidden", isHidden);
+                legend.setAttribute("aria-pressed", isHidden ? "false" : "true");
+              });
+
+              Array.prototype.slice.call(chart.querySelectorAll("[data-scenario-label]")).forEach(function (label) {
+                var isFocused = focusScenario && label.dataset.scenarioLabel === focusScenario;
+                var isDimmed = focusScenario && !isFocused;
+                label.classList.toggle("is-focused", Boolean(isFocused));
+                label.classList.toggle("is-hidden", Boolean(isDimmed));
+                label.setAttribute("aria-pressed", isFocused ? "true" : "false");
+              });
+            }
+
+            function toggleSeries(chart, series) {
+              var hidden = hiddenSet(chart);
+              if (hidden.has(series)) {
+                hidden.delete(series);
+              } else {
+                hidden.add(series);
+              }
+              storeHidden(chart, hidden);
+              sync(chart);
+            }
+
+            function toggleScenario(chart, scenario) {
+              chart.dataset.focusScenario = chart.dataset.focusScenario === scenario ? "" : scenario;
+              sync(chart);
+            }
+
+            document.querySelectorAll("[data-chart-toggle]").forEach(function (chart) {
+              sync(chart);
+              chart.addEventListener("click", function (event) {
+                var target = event.target.closest("[data-series], [data-legend-series], [data-scenario-label]");
+                if (!target || !chart.contains(target)) return;
+                if (target.dataset.scenarioLabel) {
+                  toggleScenario(chart, target.dataset.scenarioLabel);
+                  return;
+                }
+                toggleSeries(chart, target.dataset.series || target.dataset.legendSeries);
+              });
+              chart.addEventListener("keydown", function (event) {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                var target = event.target.closest("[data-series], [data-legend-series], [data-scenario-label]");
+                if (!target || !chart.contains(target)) return;
+                event.preventDefault();
+                if (target.dataset.scenarioLabel) {
+                  toggleScenario(chart, target.dataset.scenarioLabel);
+                  return;
+                }
+                toggleSeries(chart, target.dataset.series || target.dataset.legendSeries);
+              });
+            });
+          })();
+        JS
       end
 
       def css
@@ -533,7 +657,16 @@ module Raptor
           svg { display: block; min-width: 820px; width: 100%; }
           .axis { stroke: #8c97a6; stroke-width: 1; }
           .tick, .x-label, .legend-label { fill: var(--muted); font-size: 12px; }
+          .bar, .legend-item, .x-label { cursor: pointer; transition: opacity 120ms ease; }
+          .bar:focus, .legend-item:focus, .x-label:focus { outline: 2px solid #315fba; outline-offset: 2px; }
+          .bar.is-hidden { opacity: 0.2; }
+          .legend-item.is-hidden, .x-label.is-hidden { opacity: 0.4; }
+          .x-label.is-focused { font-weight: 700; fill: var(--ink); }
           ul { max-width: 920px; padding-left: 20px; }
+          @media (max-width: 960px) {
+            main { padding: 24px 16px 44px; }
+            h1 { font-size: 30px; }
+          }
         CSS
       end
 

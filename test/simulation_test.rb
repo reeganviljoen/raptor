@@ -454,6 +454,9 @@ class SimulationTest < Minitest::Test
       assert_includes html, "Benchmark Quality Warnings"
       assert_includes html, "short_yjit_warmup"
       assert_includes html, "Benchmark Source Coverage"
+      assert_includes html, "Throughput And Latency"
+      assert_includes html, "data-chart-toggle"
+      assert_includes html, "data-scenario-label"
       assert_includes html, "RSS/CPU sample target"
     end
   end
