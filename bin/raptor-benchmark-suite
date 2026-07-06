@@ -106,7 +106,8 @@ module Raptor
             sample_interval: settings.fetch(:sample_interval),
             sample_count: settings.fetch(:sample_count),
             min_duration_s: settings.fetch(:min_duration_s),
-            warmup_duration_s: settings.fetch(:warmup_duration_s)
+            warmup_duration_s: settings.fetch(:warmup_duration_s),
+            progress_io: $stdout
           ).run
 
           puts "benchmark suite: #{@options.fetch(:suite)}"

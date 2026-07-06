@@ -4,12 +4,86 @@ require_relative "test_helper"
 require "fileutils"
 require "json"
 require "socket"
+require "stringio"
 require "raptor/simulation"
 require "raptor/simulation/cli"
 
 load File.expand_path("../bin/raptor-benchmark-suite", __dir__)
 
 class SimulationTest < Minitest::Test
+  def test_runner_progress_logging_writes_timestamped_lines_and_flushes
+    io = StringIO.new
+    flushed = false
+    io.define_singleton_method(:flush) { flushed = true }
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [Raptor::Simulation::Configuration.profile("quick").first],
+      scenarios: [Raptor::Simulation::Configuration.scenarios.fetch("tiny")],
+      requests: 1,
+      concurrency: 1,
+      warmup_requests: 0,
+      progress_io: io
+    )
+
+    runner.send(:log_progress, "case start 1/1 runtime=default")
+
+    assert_match(/\A\[raptor-benchmark\] \d{4}-\d{2}-\d{2}T/, io.string)
+    assert_includes io.string, "case start 1/1 runtime=default"
+    assert_equal true, flushed
+
+    closed_io = StringIO.new
+    closed_io.close
+    runner.send(:log_progress, "this should not fail the benchmark")
+    assert true
+  end
+
+  def test_runner_progress_logging_records_case_errors
+    io = StringIO.new
+    profile = Raptor::Simulation::Configuration.profile("quick").first
+    scenario = Raptor::Simulation::Configuration.scenarios.fetch("tiny")
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [profile],
+      scenarios: [scenario],
+      requests: 1,
+      concurrency: 1,
+      warmup_requests: 0,
+      progress_io: io
+    )
+    runner.define_singleton_method(:warmup) do |_server, _scenario|
+      raise RuntimeError, "warmup failed"
+    end
+    server = Struct.new(:profile, :pid).new(profile, Process.pid)
+
+    Dir.mktmpdir do |dir|
+      assert_raises(RuntimeError) do
+        runner.send(:run_case, dir, server, Raptor::Simulation::Configuration.runtime("default"), profile, scenario, 1, 1, 1)
+      end
+    end
+
+    assert_includes io.string, "case start 1/1 runtime=default"
+    assert_includes io.string, "case error 1/1 runtime=default"
+    assert_includes io.string, "error=RuntimeError: warmup failed"
+  end
+
+  def test_runner_progress_logging_records_run_errors
+    io = StringIO.new
+    runner = Raptor::Simulation::Runner.new(
+      profiles: [],
+      scenarios: [],
+      requests: 1,
+      concurrency: 1,
+      warmup_requests: 0,
+      progress_io: io
+    )
+    runner.define_singleton_method(:metadata) do |_run_id|
+      raise RuntimeError, "metadata failed"
+    end
+
+    assert_raises(RuntimeError) { runner.run }
+
+    assert_includes io.string, "run error id="
+    assert_includes io.string, "error=RuntimeError: metadata failed"
+  end
+
   def test_percentile_summary_interpolates_tail_values
     summary = Raptor::Simulation::Percentiles.summarize([1.0, 2.0, 3.0, 4.0])
 

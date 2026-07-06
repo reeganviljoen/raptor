@@ -74,7 +74,8 @@ module Raptor
           sample_interval: @options[:sample_interval],
           sample_count: @options[:sample_count],
           min_duration_s: @options[:min_duration_s],
-          warmup_duration_s: @options[:warmup_duration_s]
+          warmup_duration_s: @options[:warmup_duration_s],
+          progress_io: $stdout
         ).run
 
         puts "wrote #{result.fetch("output_dir")}"
