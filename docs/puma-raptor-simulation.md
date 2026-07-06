@@ -46,14 +46,14 @@ bundle exec ruby bin/raptor-simulate --profile full --runtime yjit-off --runtime
 
 Artifacts are written under `tmp/simulations/<run-id>/` by default:
 
-- `metadata.json`: Ruby, gem versions, git SHA, CPU count, allocator/YJIT hints, profile, scenario list, and run settings.
+- `metadata.json`: Ruby, gem versions, git SHA, CPU count, allocator/harness YJIT hints, profile, scenario list, and run settings.
 - `summary.json`: machine-readable summary rows.
 - `summary.csv`: flat rows for spreadsheet and graphing tools.
 - `samples.ndjson`: RSS/CPU process-tree samples.
 - `report.md`: a human-readable summary table and caveats.
 - `report.html`: a self-contained offline report with comparison tables and inline SVG graphs.
-- `<scenario>/<server>/repeat-N/result.json`: per-case measurement detail.
-- `<scenario>/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs.
+- `<runtime>/<scenario>/<server>/repeat-N/result.json`: per-case measurement detail.
+- `<runtime>/<scenario>/<server>/repeat-N/server.stdout.log` and `server.stderr.log`: server logs.
 - `config.ru`: the exact generated Rack workload used for both servers.
 
 Open `report.html` directly in a browser to inspect the offline tables and graphs. When multiple runtimes are selected, the report keeps `yjit-off` and `yjit-on` as separate table rows and chart series.

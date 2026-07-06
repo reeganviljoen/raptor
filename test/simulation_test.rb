@@ -110,10 +110,32 @@ class SimulationTest < Minitest::Test
     metadata = runner.send(:metadata, "test-run")
     codes = metadata.fetch("quality_warnings").map { |warning| warning.fetch("code") }
 
+    assert_includes metadata.keys, "harness_yjit"
+    refute_includes metadata.keys, "yjit"
     assert_includes codes, "closed_loop_client"
     assert_includes codes, "low_repeats"
     assert_includes codes, "short_yjit_warmup"
     assert_includes codes, "short_yjit_measurement"
+  end
+
+  def test_adapter_summary_aggregates_repeats_before_selecting_best_profile
+    rows = [
+      benchmark_row("yjit-on", "tiny", "raptor-stable", "raptor", 99.0, 10.0, 20.0),
+      benchmark_row("yjit-on", "tiny", "raptor-stable", "raptor", 100.0, 10.0, 20.0),
+      benchmark_row("yjit-on", "tiny", "raptor-stable", "raptor", 101.0, 10.0, 20.0),
+      benchmark_row("yjit-on", "tiny", "raptor-flaky", "raptor", 10.0, 1.0, 10.0),
+      benchmark_row("yjit-on", "tiny", "raptor-flaky", "raptor", 12.0, 100.0, 30.0),
+      benchmark_row("yjit-on", "tiny", "raptor-flaky", "raptor", 1_000.0, 100.0, 30.0)
+    ]
+
+    summary = Raptor::Simulation::Report.adapter_summary(rows)
+
+    assert_equal 1, summary.length
+    assert_equal 100.0, summary.first.fetch("best_rps")
+    assert_equal "raptor-stable", summary.first.fetch("best_rps_server")
+    assert_equal 10.0, summary.first.fetch("lowest_p99_ms")
+    assert_equal "raptor-stable", summary.first.fetch("lowest_p99_server")
+    assert_equal 6, summary.first.fetch("runs")
   end
 
   def test_simulation_command_is_not_packaged_without_puma_runtime_dependency

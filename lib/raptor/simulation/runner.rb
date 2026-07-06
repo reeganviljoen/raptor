@@ -249,7 +249,7 @@ module Raptor
           "platform" => RUBY_PLATFORM,
           "allocator" => ENV.fetch("RUBY_ALLOCATOR", nil),
           "malloc_arena_max" => ENV.fetch("MALLOC_ARENA_MAX", nil),
-          "yjit" => defined?(RubyVM::YJIT) ? RubyVM::YJIT.enabled? : nil,
+          "harness_yjit" => defined?(RubyVM::YJIT) ? RubyVM::YJIT.enabled? : nil,
           "requests" => requests,
           "concurrency" => concurrency,
           "warmup_requests" => warmup_requests,

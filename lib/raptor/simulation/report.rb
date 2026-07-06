@@ -131,9 +131,9 @@ module Raptor
         html << section("Environment", environment_table(metadata))
         html << section("Benchmark Quality Warnings", quality_warnings_table(metadata))
         html << section("Adapter Comparison", adapter_table(adapter_rows))
-        html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Achieved requests/sec", higher_is_better: true))
-        html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest p99 latency (ms)", higher_is_better: false))
-        html << section("Peak RSS By Scenario", grouped_bar_chart(adapter_rows, "lowest_rss_mb_peak", "Lowest peak RSS (MB)", higher_is_better: false))
+        html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Best median requests/sec", higher_is_better: true))
+        html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest median p99 latency (ms)", higher_is_better: false))
+        html << section("Peak RSS By Scenario", grouped_bar_chart(adapter_rows, "lowest_rss_mb_peak", "Lowest median peak RSS (MB)", higher_is_better: false))
         html << section("All Measured Runs", raw_rows_table(rows))
         html << section("RSS Sample Coverage", sample_summary(samples))
         html << section("Caveats", caveats)
@@ -153,6 +153,7 @@ module Raptor
           "Created" => metadata["created_at"],
           "Git SHA" => metadata["git_sha"],
           "Ruby" => metadata["ruby"],
+          "Harness YJIT" => metadata.fetch("harness_yjit", metadata["yjit"]),
           "Raptor" => metadata["raptor_version"],
           "Puma" => metadata["puma_version"],
           "Rack" => metadata["rack_version"],
@@ -187,28 +188,29 @@ module Raptor
       end
 
       def adapter_summary(rows)
-        rows.group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default")] }.map do |(scenario, adapter, runtime), group|
-          rps_row = group.max_by { |row| numeric(row["achieved_rps"]) || -Float::INFINITY }
-          p50_row = group.min_by { |row| numeric(row["p50_ms"]) || Float::INFINITY }
-          p95_row = group.min_by { |row| numeric(row["p95_ms"]) || Float::INFINITY }
-          p99_row = group.min_by { |row| numeric(row["p99_ms"]) || Float::INFINITY }
-          rss_row = group.min_by { |row| numeric(row["rss_mb_peak"]) || Float::INFINITY }
+        aggregate_repeat_rows(rows).group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default")] }.map do |(scenario, adapter, runtime), group|
+          rps_row = group.max_by { |row| numeric(row["achieved_rps_median"]) || -Float::INFINITY }
+          p50_row = group.min_by { |row| numeric(row["p50_ms_median"]) || Float::INFINITY }
+          p95_row = group.min_by { |row| numeric(row["p95_ms_median"]) || Float::INFINITY }
+          p99_row = group.min_by { |row| numeric(row["p99_ms_median"]) || Float::INFINITY }
+          rss_row = group.min_by { |row| numeric(row["rss_mb_peak_median"]) || Float::INFINITY }
 
           {
             "scenario" => scenario,
             "adapter" => adapter,
             "runtime" => runtime,
             "series" => "#{adapter} #{runtime}",
-            "best_rps" => rps_row && numeric(rps_row["achieved_rps"]),
+            "best_rps" => rps_row && numeric(rps_row["achieved_rps_median"]),
             "best_rps_server" => rps_row && rps_row["server"],
-            "lowest_p50_ms" => p50_row && numeric(p50_row["p50_ms"]),
+            "lowest_p50_ms" => p50_row && numeric(p50_row["p50_ms_median"]),
             "lowest_p50_server" => p50_row && p50_row["server"],
-            "lowest_p95_ms" => p95_row && numeric(p95_row["p95_ms"]),
+            "lowest_p95_ms" => p95_row && numeric(p95_row["p95_ms_median"]),
             "lowest_p95_server" => p95_row && p95_row["server"],
-            "lowest_p99_ms" => p99_row && numeric(p99_row["p99_ms"]),
+            "lowest_p99_ms" => p99_row && numeric(p99_row["p99_ms_median"]),
             "lowest_p99_server" => p99_row && p99_row["server"],
-            "lowest_rss_mb_peak" => rss_row && numeric(rss_row["rss_mb_peak"]),
+            "lowest_rss_mb_peak" => rss_row && numeric(rss_row["rss_mb_peak_median"]),
             "lowest_rss_server" => rss_row && rss_row["server"],
+            "runs" => group.sum { |row| Integer(row["runs"] || 0) },
             "completed" => group.sum { |row| Integer(row["completed"] || 0) },
             "errors" => group.sum { |row| Integer(row["errors"] || 0) }
           }
@@ -217,7 +219,24 @@ module Raptor
 
       def adapter_table(rows)
         table(
-          ["Scenario", "Adapter", "Runtime", "Best RPS", "RPS profile", "Lowest p50", "Lowest p95", "Lowest p99", "Lowest RSS MB", "Completed", "Errors"],
+          [
+            "Scenario",
+            "Adapter",
+            "Runtime",
+            "Best median RPS",
+            "RPS profile",
+            "Lowest median p50",
+            "p50 profile",
+            "Lowest median p95",
+            "p95 profile",
+            "Lowest median p99",
+            "p99 profile",
+            "Lowest median RSS MB",
+            "RSS profile",
+            "Runs",
+            "Completed",
+            "Errors"
+          ],
           rows.map do |row|
             [
               row["scenario"],
@@ -226,14 +245,38 @@ module Raptor
               format_number(row["best_rps"]),
               row["best_rps_server"],
               format_number(row["lowest_p50_ms"]),
+              row["lowest_p50_server"],
               format_number(row["lowest_p95_ms"]),
+              row["lowest_p95_server"],
               format_number(row["lowest_p99_ms"]),
+              row["lowest_p99_server"],
               format_number(row["lowest_rss_mb_peak"]),
+              row["lowest_rss_server"],
+              row["runs"],
               row["completed"],
               row["errors"]
             ]
           end
         )
+      end
+
+      def aggregate_repeat_rows(rows)
+        rows.group_by { |row| [row.fetch("scenario"), row.fetch("adapter"), row.fetch("runtime", "default"), row.fetch("server")] }.map do |(scenario, adapter, runtime, server), group|
+          {
+            "scenario" => scenario,
+            "adapter" => adapter,
+            "runtime" => runtime,
+            "server" => server,
+            "runs" => group.length,
+            "achieved_rps_median" => median(group.map { |row| numeric(row["achieved_rps"]) }.compact),
+            "p50_ms_median" => median(group.map { |row| numeric(row["p50_ms"]) }.compact),
+            "p95_ms_median" => median(group.map { |row| numeric(row["p95_ms"]) }.compact),
+            "p99_ms_median" => median(group.map { |row| numeric(row["p99_ms"]) }.compact),
+            "rss_mb_peak_median" => median(group.map { |row| numeric(row["rss_mb_peak"]) }.compact),
+            "completed" => group.sum { |row| Integer(row["completed"] || 0) },
+            "errors" => group.sum { |row| Integer(row["errors"] || 0) }
+          }
+        end
       end
 
       def raw_rows_table(rows)
@@ -357,6 +400,7 @@ module Raptor
             <li>Warmup requests are discarded from latency and throughput numbers.</li>
             <li>RSS and CPU charts depend on <code>ps</code>. If process sampling is unavailable, memory cells may be blank.</li>
             <li>Puma cluster GC deltas are intentionally blank in summary columns because a normal HTTP metrics probe samples one worker, not the full cluster.</li>
+            <li>Adapter comparison tables and charts aggregate repeats by server/runtime/scenario first, then compare medians across server profiles.</li>
             <li>Use raw absolute numbers first. Percentage deltas only make sense beside latency, throughput, RSS, CPU, errors, and workload context.</li>
           </ul>
         HTML
@@ -423,6 +467,16 @@ module Raptor
         Float(value)
       rescue ArgumentError, TypeError
         nil
+      end
+
+      def median(values)
+        return nil if values.empty?
+
+        sorted = values.sort
+        midpoint = sorted.length / 2
+        return sorted[midpoint] if sorted.length.odd?
+
+        (sorted[midpoint - 1] + sorted[midpoint]) / 2.0
       end
 
       def format_number(value)
