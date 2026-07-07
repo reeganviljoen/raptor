@@ -553,6 +553,12 @@ class SimulationTest < Minitest::Test
       assert_includes html, "metric-grid"
       assert_includes html, "chart-compact"
       assert_equal 18, html.scan(/<figure class="chart chart-compact"/).length
+      assert_equal 18, html.scan(/<button type="button" class="chart-open-button"/).length
+      assert_includes html, "data-chart-open"
+      assert_includes html, "Open chart larger"
+      assert_includes html, "data-chart-modal"
+      assert_includes html, "data-chart-modal-content"
+      assert_includes html, "data-chart-modal-close"
       assert_includes html, 'data-fixed-max="4000.0"'
       assert_match(/<h4>YJIT off<\/h4>.*?<figcaption>Best median throughput \(requests\/sec\).*?<text class="tick" data-axis-max[^>]*>4000.0<\/text>/m, html)
       refute_includes html, "Throughput By Scenario"
