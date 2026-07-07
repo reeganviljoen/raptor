@@ -158,16 +158,15 @@ module Raptor
         html << section("Environment", environment_table(metadata))
         html << section("Benchmark Quality Warnings", quality_warnings_table(metadata))
         html << section("Benchmark Source Coverage", source_coverage_table(rows))
-        html << section("Adapter Comparison", adapter_table(adapter_rows))
         html << section("Throughput And Latency", throughput_latency_notes)
-        html << section("Throughput By Scenario", grouped_bar_chart(adapter_rows, "best_rps", "Best median requests/sec", higher_is_better: true))
-        html << section("P99 Latency By Scenario", grouped_bar_chart(adapter_rows, "lowest_p99_ms", "Lowest median p99 latency (ms)", higher_is_better: false))
-        html << section("Peak RSS By Scenario", grouped_bar_chart(adapter_rows, "lowest_rss_mb_peak", "Lowest median peak RSS (MB)", higher_is_better: false))
+        html << section("Charted Comparisons", chart_breakdown(adapter_rows))
+        html << section("Adapter Comparison", adapter_table(adapter_rows))
         html << section("All Measured Runs", raw_rows_table(rows))
         html << section("RSS Sample Coverage", sample_summary(samples))
         html << section("Caveats", caveats)
-        html << "<script>#{chart_toggle_script}</script>"
+        html << chart_modal
         html << "</main>"
+        html << "<script>#{chart_toggle_script}</script>"
         html << "</body>"
         html << "</html>"
 
@@ -349,6 +348,44 @@ module Raptor
         HTML
       end
 
+      def chart_breakdown(rows)
+        groups = chart_groups(rows)
+        return "<p>No adapter comparison rows were recorded.</p>" if groups.empty?
+
+        html = []
+        html << "<div class=\"chart-breakdown\">"
+        groups.each do |group|
+          metric_charts = [
+            ["best_rps", "Best median throughput (requests/sec)", true],
+            ["lowest_p99_ms", "Lowest median p99 latency (ms)", false],
+            ["lowest_rss_mb_peak", "Lowest median peak RSS (MB)", false]
+          ]
+          metric_maxes = metric_charts.to_h { |metric, _label, _higher| [metric, chart_max(group.fetch("rows"), metric)] }
+
+          html << "<section class=\"chart-family\">"
+          html << "<div class=\"chart-family-heading\">"
+          html << "<h3>#{h(group.fetch("title"))}</h3>"
+          html << "<p>#{h(group.fetch("description"))}</p>"
+          html << "</div>"
+
+          runtime_labels(group.fetch("rows")).each do |runtime|
+            runtime_rows = group.fetch("rows").select { |row| row["runtime"].to_s == runtime }
+            html << "<div class=\"runtime-section\">"
+            html << "<h4>#{h(runtime_title(runtime))}</h4>"
+            html << "<div class=\"metric-grid\">"
+            metric_charts.each do |metric, label, higher_is_better|
+              html << grouped_bar_chart(runtime_rows, metric, label, higher_is_better: higher_is_better, compact: true, scenario_labels: group.fetch("scenario_labels"), max_value: metric_maxes.fetch(metric))
+            end
+            html << "</div>"
+            html << "</div>"
+          end
+
+          html << "</section>"
+        end
+        html << "</div>"
+        html.join("\n")
+      end
+
       def aggregate_repeat_rows(rows)
         rows.group_by { |row| [row.fetch("scenario"), row["scenario_family"], row["benchmark_source"], row.fetch("adapter"), row.fetch("runtime", "default"), row.fetch("server"), row["server_capacity"]] }.map do |(scenario, family, source, adapter, runtime, server, capacity), group|
           {
@@ -426,27 +463,122 @@ module Raptor
         )
       end
 
-      def grouped_bar_chart(rows, metric, label, higher_is_better:)
-        scenarios = rows.map { |row| row["scenario"] }.uniq
-        series = rows.map { |row| row["series"] }.uniq.sort
-        values = rows.to_h { |row| [[row["scenario"], row["series"]], numeric(row[metric])] }
-        max = values.values.compact.max || 1.0
-        max = 1.0 if max <= 0.0
+      def chart_groups(rows)
+        groups = []
+        by_key = {}
 
-        width = [960, 170 + (scenarios.length * series.length * 34)].max
-        height = 360
-        plot_left = 72
+        rows.each do |row|
+          metadata = chart_group_metadata(row["scenario"], row["scenario_family"])
+          key = metadata.fetch("key")
+          group = by_key[key]
+          unless group
+            group = metadata.merge("rows" => [], "scenario_labels" => {})
+            groups << group
+            by_key[key] = group
+          end
+
+          scenario = row["scenario"]
+          group.fetch("rows") << row
+          group.fetch("scenario_labels")[scenario] ||= scenario_short_label(scenario)
+        end
+
+        groups
+      end
+
+      def chart_max(rows, metric)
+        max = rows.map { |row| numeric(row[metric]) }.compact.max || 1.0
+        max <= 0.0 ? 1.0 : max
+      end
+
+      def chart_group_metadata(scenario, family)
+        case scenario.to_s
+        when /\Apuma-response-(array|chunk|string|io)-/
+          body = Regexp.last_match(1)
+          body_label = body == "io" ? "IO" : body.capitalize
+          {
+            "key" => "puma-response-#{body}",
+            "title" => "Response body: #{body_label}",
+            "description" => "Puma response-body benchmark rows grouped by body representation, with payload sizes kept on one small axis."
+          }
+        when /\Apuma-long-tail-fib-200ms-/
+          {
+            "key" => "puma-long-tail",
+            "title" => "Long-tail concurrency sweep",
+            "description" => "Mixed sleep plus Fibonacci work at Puma's long-tail pressure points."
+          }
+        when /\Apuma-sleep-fibonacci-/
+          {
+            "key" => "puma-sleep-fibonacci",
+            "title" => "Sleep/fibonacci delay sweep",
+            "description" => "Puma sleep/fibonacci microbenchmark rows grouped by delay duration."
+          }
+        else
+          label = family.to_s.empty? ? "Ad hoc workload" : family.to_s.split(/[-_]/).map(&:capitalize).join(" ")
+          {
+            "key" => family.to_s.empty? ? "ad-hoc" : family.to_s,
+            "title" => label,
+            "description" => "Generated benchmark scenarios outside the Puma-derived default families."
+          }
+        end
+      end
+
+      def scenario_short_label(scenario)
+        case scenario.to_s
+        when /\Apuma-response-[^-]+-(\d+)kb\z/
+          "#{Regexp.last_match(1)} KB"
+        when /\Apuma-long-tail-fib-200ms-x(.+)\z/
+          "x#{Regexp.last_match(1).tr("p", ".")}"
+        when /\Apuma-sleep-fibonacci-(\d+)ms\z/
+          "#{Regexp.last_match(1)} ms"
+        else
+          scenario.to_s.sub(/\Apuma-/, "").gsub("-", " ")
+        end
+      end
+
+      def runtime_labels(rows)
+        rows.map { |row| row["runtime"].to_s }.uniq.sort_by { |runtime| runtime_sort_key(runtime) }
+      end
+
+      def runtime_title(runtime)
+        case runtime
+        when "yjit-on" then "YJIT on"
+        when "yjit-off" then "YJIT off"
+        when "default" then "Default runtime"
+        else runtime
+        end
+      end
+
+      def runtime_sort_key(runtime)
+        case runtime
+        when "yjit-off" then [0, runtime]
+        when "yjit-on" then [1, runtime]
+        else [2, runtime]
+        end
+      end
+
+      def grouped_bar_chart(rows, metric, label, higher_is_better:, compact: false, scenario_labels: {}, max_value: nil)
+        scenarios = rows.map { |row| row["scenario"] }.uniq
+        series = rows.map { |row| row["series"] }.uniq.sort_by { |series_name| series_sort_key(series_name) }
+        values = rows.to_h { |row| [[row["scenario"], row["series"]], numeric(row[metric])] }
+        max = max_value || chart_max(rows, metric)
+
+        width = [compact ? 560 : 960, 170 + (scenarios.length * series.length * (compact ? 42 : 34))].max
+        height = compact ? 280 : 360
+        plot_left = compact ? 66 : 72
         plot_right = width - 28
-        plot_top = 36
-        plot_bottom = height - 82
+        plot_top = compact ? 32 : 36
+        plot_bottom = height - (compact ? 70 : 82)
         plot_width = plot_right - plot_left
         plot_height = plot_bottom - plot_top
         group_width = plot_width / [scenarios.length, 1].max.to_f
-        bar_width = [18, (group_width / ([series.length, 1].max + 1))].min
+        bar_width = [compact ? 24 : 18, (group_width / ([series.length, 1].max + 1))].min
+        figure_classes = compact ? "chart chart-compact" : "chart"
 
         svg = []
-        svg << "<figure class=\"chart\" data-chart-toggle>"
-        svg << "<figcaption>#{h(label)}. #{higher_is_better ? "Higher is better." : "Lower is better."}</figcaption>"
+        fixed_max_attribute = max_value ? " data-fixed-max=\"#{h(max)}\"" : ""
+        svg << "<figure class=\"#{figure_classes}\" data-chart-toggle#{fixed_max_attribute}>"
+        svg << chart_open_button
+        svg << "<figcaption>#{h(label)} <span>#{higher_is_better ? "Higher is better." : "Lower is better."}</span></figcaption>"
         svg << "<svg viewBox=\"0 0 #{width} #{height}\" role=\"img\" aria-label=\"#{h(label)} chart\">"
         svg << "<line class=\"axis\" x1=\"#{plot_left}\" y1=\"#{plot_bottom}\" x2=\"#{plot_right}\" y2=\"#{plot_bottom}\" />"
         svg << "<line class=\"axis\" x1=\"#{plot_left}\" y1=\"#{plot_top}\" x2=\"#{plot_left}\" y2=\"#{plot_bottom}\" />"
@@ -455,7 +587,7 @@ module Raptor
 
         scenarios.each_with_index do |scenario, scenario_index|
           center = plot_left + (group_width * scenario_index) + (group_width / 2.0)
-          svg << "<text class=\"x-label\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" data-scenario-label=\"#{h(scenario)}\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 28}\" text-anchor=\"middle\">#{h(scenario)}</text>"
+          svg << "<text class=\"x-label\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" data-scenario-label=\"#{h(scenario)}\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 26}\" text-anchor=\"middle\">#{h(scenario_labels.fetch(scenario, scenario))}</text>"
 
           series.each_with_index do |series_name, series_index|
             value = values[[scenario, series_name]]
@@ -464,14 +596,14 @@ module Raptor
             x = center - ((series.length * bar_width) / 2.0) + (series_index * bar_width)
             bar_height = (value / max) * plot_height
             y = plot_bottom - bar_height
-            svg << "<rect class=\"bar\" role=\"button\" tabindex=\"0\" aria-pressed=\"true\" data-scenario=\"#{h(scenario)}\" data-series=\"#{h(series_name)}\" data-value=\"#{h(value)}\" data-plot-bottom=\"#{plot_bottom}\" data-plot-height=\"#{plot_height}\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{(bar_width - 4).round(2)}\" height=\"#{bar_height.round(2)}\">"
+            svg << "<rect class=\"bar\" role=\"button\" tabindex=\"0\" aria-pressed=\"true\" data-scenario=\"#{h(scenario)}\" data-series=\"#{h(series_name)}\" data-value=\"#{h(value)}\" data-plot-bottom=\"#{plot_bottom}\" data-plot-height=\"#{plot_height}\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{[bar_width - 4, 6].max.round(2)}\" height=\"#{bar_height.round(2)}\">"
             svg << "<title>#{h(scenario)} #{h(series_name)}: #{h(format_number(value))}</title>"
             svg << "</rect>"
           end
         end
 
         series.each_with_index do |series_name, index|
-          x = plot_left + (index * 150)
+          x = plot_left + (index * (compact ? 168 : 150))
           svg << "<g class=\"legend-item\" role=\"button\" tabindex=\"0\" data-legend-series=\"#{h(series_name)}\" aria-pressed=\"true\">"
           svg << "<rect class=\"legend\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x}\" y=\"#{height - 30}\" width=\"14\" height=\"14\" />"
           svg << "<text class=\"legend-label\" x=\"#{x + 20}\" y=\"#{height - 18}\">#{h(series_name)}</text>"
@@ -481,6 +613,46 @@ module Raptor
         svg << "</svg>"
         svg << "</figure>"
         svg.join("\n")
+      end
+
+      def chart_open_button
+        <<~HTML.chomp
+          <button type="button" class="chart-open-button" data-chart-open aria-label="Open chart larger">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M8 4H4v4M4 4l6 6M16 4h4v4M20 4l-6 6M8 20H4v-4M4 20l6-6M16 20h4v-4M20 20l-6-6" />
+            </svg>
+          </button>
+        HTML
+      end
+
+      def chart_modal
+        <<~HTML
+          <div class="chart-modal" data-chart-modal hidden role="dialog" aria-modal="true" aria-label="Expanded benchmark chart">
+            <div class="chart-modal-panel">
+              <div class="chart-modal-toolbar">
+                <button type="button" class="chart-modal-close" data-chart-modal-close aria-label="Close expanded chart">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </div>
+              <div class="chart-modal-content" data-chart-modal-content></div>
+            </div>
+          </div>
+        HTML
+      end
+
+      def series_sort_key(series_name)
+        adapter_rank =
+          if series_name.start_with?("raptor")
+            0
+          elsif series_name.start_with?("puma")
+            1
+          else
+            2
+          end
+
+        [adapter_rank, series_name]
       end
 
       def table(headers, rows)
@@ -548,7 +720,8 @@ module Raptor
               var visibleBars = allBars.filter(function (bar) {
                 return !hidden.has(bar.dataset.series) && (!focusScenario || bar.dataset.scenario === focusScenario);
               });
-              var max = maxValue(visibleBars.length > 0 ? visibleBars : allBars);
+              var fixedMax = number(chart.dataset.fixedMax);
+              var max = fixedMax || maxValue(visibleBars.length > 0 ? visibleBars : allBars);
               var axisMax = chart.querySelector("[data-axis-max]");
               if (axisMax) axisMax.textContent = format(max);
 
@@ -595,28 +768,85 @@ module Raptor
               sync(chart);
             }
 
-            document.querySelectorAll("[data-chart-toggle]").forEach(function (chart) {
+            function activateTarget(chart, target) {
+              if (target.dataset.scenarioLabel) {
+                toggleScenario(chart, target.dataset.scenarioLabel);
+                return;
+              }
+              toggleSeries(chart, target.dataset.series || target.dataset.legendSeries);
+            }
+
+            function setupChart(chart) {
               sync(chart);
               chart.addEventListener("click", function (event) {
                 var target = event.target.closest("[data-series], [data-legend-series], [data-scenario-label]");
                 if (!target || !chart.contains(target)) return;
-                if (target.dataset.scenarioLabel) {
-                  toggleScenario(chart, target.dataset.scenarioLabel);
-                  return;
-                }
-                toggleSeries(chart, target.dataset.series || target.dataset.legendSeries);
+                activateTarget(chart, target);
               });
               chart.addEventListener("keydown", function (event) {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 var target = event.target.closest("[data-series], [data-legend-series], [data-scenario-label]");
                 if (!target || !chart.contains(target)) return;
                 event.preventDefault();
-                if (target.dataset.scenarioLabel) {
-                  toggleScenario(chart, target.dataset.scenarioLabel);
-                  return;
-                }
-                toggleSeries(chart, target.dataset.series || target.dataset.legendSeries);
+                activateTarget(chart, target);
               });
+            }
+
+            var modal = document.querySelector("[data-chart-modal]");
+            var modalContent = modal ? modal.querySelector("[data-chart-modal-content]") : null;
+            var modalClose = modal ? modal.querySelector("[data-chart-modal-close]") : null;
+            var previouslyFocused = null;
+
+            function openChartModal(chart) {
+              if (!modal || !modalContent) return;
+              previouslyFocused = document.activeElement;
+              modalContent.textContent = "";
+              var clone = chart.cloneNode(true);
+              var openButton = clone.querySelector("[data-chart-open]");
+              if (openButton) openButton.remove();
+              clone.classList.add("chart-modal-expanded");
+              modalContent.appendChild(clone);
+              modal.hidden = false;
+              document.body.classList.add("chart-modal-open");
+              setupChart(clone);
+              if (modalClose) modalClose.focus();
+            }
+
+            function closeChartModal() {
+              if (!modal || !modalContent || modal.hidden) return;
+              modal.hidden = true;
+              modalContent.textContent = "";
+              document.body.classList.remove("chart-modal-open");
+              if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+                previouslyFocused.focus();
+              }
+              previouslyFocused = null;
+            }
+
+            document.querySelectorAll("[data-chart-toggle]").forEach(function (chart) {
+              setupChart(chart);
+            });
+
+            document.addEventListener("click", function (event) {
+              var opener = event.target.closest("[data-chart-open]");
+              if (opener) {
+                event.preventDefault();
+                var chart = opener.closest("[data-chart-toggle]");
+                if (chart) openChartModal(chart);
+                return;
+              }
+
+              if (modal && event.target === modal) {
+                closeChartModal();
+              }
+            });
+
+            if (modalClose) {
+              modalClose.addEventListener("click", closeChartModal);
+            }
+
+            document.addEventListener("keydown", function (event) {
+              if (event.key === "Escape") closeChartModal();
             });
           })();
         JS
@@ -639,11 +869,14 @@ module Raptor
             color: var(--ink);
             font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           }
+          body.chart-modal-open { overflow: hidden; }
           main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 56px; }
           .hero { border-bottom: 1px solid var(--line); margin-bottom: 28px; padding-bottom: 22px; }
           .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; margin: 0 0 8px; text-transform: uppercase; }
           h1 { font-size: 34px; line-height: 1.1; margin: 0 0 12px; }
           h2 { font-size: 21px; margin: 32px 0 12px; }
+          h3 { font-size: 18px; line-height: 1.25; margin: 0 0 6px; }
+          h4 { color: var(--muted); font-size: 13px; letter-spacing: 0; margin: 18px 0 10px; text-transform: uppercase; }
           p { max-width: 850px; }
           code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
           section { margin-bottom: 28px; }
@@ -652,9 +885,112 @@ module Raptor
           th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
           th { background: var(--panel); font-size: 12px; text-transform: uppercase; }
           tr:last-child td { border-bottom: 0; }
-          .chart { border: 1px solid var(--line); margin: 0; overflow-x: auto; padding: 14px; }
-          figcaption { color: var(--muted); margin-bottom: 8px; }
-          svg { display: block; min-width: 820px; width: 100%; }
+          .chart-breakdown { margin-top: 18px; }
+          .chart-family { border-top: 1px solid var(--line); margin: 26px 0 34px; padding-top: 18px; }
+          .chart-family:first-child { margin-top: 8px; }
+          .chart-family-heading {
+            align-items: baseline;
+            display: grid;
+            gap: 6px 18px;
+            grid-template-columns: minmax(210px, 0.34fr) minmax(0, 1fr);
+          }
+          .chart-family-heading p { color: var(--muted); margin: 0; max-width: none; }
+          .runtime-section { margin-top: 16px; }
+          .metric-grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+          }
+          .chart { border: 1px solid var(--line); margin: 0; overflow-x: auto; padding: 14px; position: relative; }
+          .chart-compact { min-width: 0; padding: 12px; }
+          figcaption { color: var(--ink); font-weight: 700; margin-bottom: 8px; padding-right: 38px; }
+          figcaption span { color: var(--muted); display: block; font-weight: 500; }
+          .chart svg { display: block; min-width: 820px; width: 100%; }
+          .chart-compact svg { min-width: 0; }
+          .chart-open-button,
+          .chart-modal-close {
+            align-items: center;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            color: var(--muted);
+            cursor: pointer;
+            display: inline-flex;
+            height: 30px;
+            justify-content: center;
+            padding: 0;
+            width: 30px;
+          }
+          .chart-open-button {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            z-index: 2;
+          }
+          .chart-open-button svg,
+          .chart-modal-close svg {
+            fill: none;
+            height: 16px;
+            stroke: currentColor;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-width: 2;
+            width: 16px;
+          }
+          .chart-open-button:hover,
+          .chart-modal-close:hover {
+            background: #ffffff;
+            color: var(--ink);
+          }
+          .chart-open-button:focus,
+          .chart-modal-close:focus {
+            outline: none;
+          }
+          .chart-open-button:focus-visible,
+          .chart-modal-close:focus-visible {
+            outline: 2px solid #315fba;
+            outline-offset: 2px;
+          }
+          .chart-modal[hidden] { display: none; }
+          .chart-modal {
+            background: rgba(28, 36, 48, 0.72);
+            display: grid;
+            inset: 0;
+            padding: 24px;
+            place-items: center;
+            position: fixed;
+            z-index: 1000;
+          }
+          .chart-modal-panel {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            box-shadow: 0 22px 70px rgba(28, 36, 48, 0.28);
+            max-height: calc(100vh - 48px);
+            overflow: auto;
+            padding: 16px;
+            width: min(1180px, calc(100vw - 48px));
+          }
+          .chart-modal-toolbar {
+            background: #ffffff;
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+          }
+          .chart-modal-content .chart {
+            border: 0;
+            padding: 0;
+          }
+          .chart-modal-content figcaption {
+            font-size: 16px;
+            padding-right: 0;
+          }
+          .chart-modal-content .chart svg,
+          .chart-modal-content .chart-compact svg {
+            min-width: 980px;
+          }
           .axis { stroke: #8c97a6; stroke-width: 1; }
           .tick, .x-label, .legend-label { fill: var(--muted); font-size: 12px; }
           .bar, .legend-item, .x-label { cursor: pointer; transition: opacity 120ms ease; }
@@ -666,6 +1002,8 @@ module Raptor
           @media (max-width: 960px) {
             main { padding: 24px 16px 44px; }
             h1 { font-size: 30px; }
+            .chart-family-heading { grid-template-columns: 1fr; }
+            .metric-grid { grid-template-columns: 1fr; }
           }
         CSS
       end
