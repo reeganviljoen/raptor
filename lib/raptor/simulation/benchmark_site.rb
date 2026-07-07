@@ -13,7 +13,6 @@ module Raptor
     class BenchmarkSite
       DEFAULT_TITLE = "Raptor Benchmarks"
       COPIED_ARTIFACTS = %w[
-        report.html
         report.md
         metadata.json
         summary.json
@@ -74,10 +73,21 @@ module Raptor
             {
               "run_dir" => run_dir,
               "metadata" => JSON.parse(File.read(metadata_path)),
-              "summary" => JSON.parse(File.read(summary_path))
+              "summary" => JSON.parse(File.read(summary_path)),
+              "samples" => load_samples(File.join(run_dir, "samples.ndjson"))
             }
           end
         end.sort_by { |run| run.fetch("metadata").fetch("created_at", "") }
+      end
+
+      def load_samples(path)
+        return [] unless File.file?(path)
+
+        File.readlines(path, chomp: true).filter_map do |line|
+          next if line.empty?
+
+          JSON.parse(line)
+        end
       end
 
       def copy_run_artifacts(runs)
@@ -93,6 +103,12 @@ module Raptor
             source = File.join(run.fetch("run_dir"), artifact)
             FileUtils.cp(source, File.join(destination, artifact)) if File.exist?(source)
           end
+          Report.write_html(
+            File.join(destination, "report.html"),
+            metadata,
+            run.fetch("summary"),
+            run.fetch("samples")
+          )
 
           run.merge(
             "slug" => slug,

@@ -47,6 +47,7 @@ jobs:
       RAPTOR_BENCH_RUNNER: ${{ matrix.runner }}
       RAPTOR_BENCH_AXIS: ${{ matrix.arch }}-all-runtimes
       RAPTOR_BENCH_OUTPUT: tmp/raptor-benchmarks/runs/${{ matrix.arch }}
+      RAPTOR_BENCH_PROGRESS: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6

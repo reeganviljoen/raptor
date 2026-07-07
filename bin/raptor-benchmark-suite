@@ -33,6 +33,7 @@ module Raptor
           requests: 200,
           warmup_requests: 100,
           concurrency: 2,
+          timeout: 30,
           repeats: 1,
           sample_interval: 0.25,
           sample_count: Runner::DEFAULT_SAMPLE_COUNT,
@@ -46,6 +47,7 @@ module Raptor
           requests: 1_000,
           warmup_requests: 1_000,
           concurrency: 8,
+          timeout: 30,
           repeats: 3,
           sample_interval: 0.5,
           sample_count: Runner::DEFAULT_SAMPLE_COUNT,
@@ -59,6 +61,7 @@ module Raptor
           requests: 5_000,
           warmup_requests: 2_000,
           concurrency: 8,
+          timeout: 30,
           repeats: 5,
           sample_interval: 0.5,
           sample_count: Runner::DEFAULT_SAMPLE_COUNT,
@@ -83,7 +86,8 @@ module Raptor
           arch: ENV.fetch("RAPTOR_BENCH_ARCH", nil),
           os: ENV.fetch("RAPTOR_BENCH_OS", nil),
           runner: ENV.fetch("RAPTOR_BENCH_RUNNER", nil),
-          axis: ENV.fetch("RAPTOR_BENCH_AXIS", nil)
+          axis: ENV.fetch("RAPTOR_BENCH_AXIS", nil),
+          progress: ENV.fetch("RAPTOR_BENCH_PROGRESS", "0") == "1"
         }
         @explicit = {}
       end
@@ -103,11 +107,12 @@ module Raptor
             warmup_requests: settings.fetch(:warmup_requests),
             repeats: settings.fetch(:repeats),
             output_root: @options.fetch(:output),
+            timeout: settings.fetch(:timeout),
             sample_interval: settings.fetch(:sample_interval),
             sample_count: settings.fetch(:sample_count),
             min_duration_s: settings.fetch(:min_duration_s),
             warmup_duration_s: settings.fetch(:warmup_duration_s),
-            progress_io: $stdout
+            progress_io: @options[:progress] ? $stdout : nil
           ).run
 
           puts "benchmark suite: #{@options.fetch(:suite)}"
@@ -135,6 +140,7 @@ module Raptor
           opts.on("--requests COUNT", Integer, "Override measured requests per case") { |value| set_option(:requests, value) }
           opts.on("--warmup-requests COUNT", Integer, "Override warmup requests per case") { |value| set_option(:warmup_requests, value) }
           opts.on("--concurrency COUNT", Integer, "Override client concurrency") { |value| set_option(:concurrency, value) }
+          opts.on("--timeout SECONDS", Float, "HTTP open/read timeout per request") { |value| set_option(:timeout, value) }
           opts.on("--repeat COUNT", Integer, "Override repeats per case") { |value| set_option(:repeats, value) }
           opts.on("--sample-interval SECONDS", Float, "Override RSS/CPU sample interval") { |value| set_option(:sample_interval, value) }
           opts.on("--sample-count COUNT", Integer, "Override target measured RSS/CPU samples per case") { |value| set_option(:sample_count, value) }
@@ -146,6 +152,7 @@ module Raptor
           opts.on("--os NAME", "OS label for metadata") { |value| set_option(:os, value) }
           opts.on("--runner NAME", "Runner label for metadata") { |value| set_option(:runner, value) }
           opts.on("--axis NAME", "Benchmark axis label for metadata") { |value| set_option(:axis, value) }
+          opts.on("--[no-]progress", "Emit per-case [raptor-benchmark] progress logs") { |value| set_option(:progress, value) }
           opts.on("--[no-]site", "Build the static benchmark site after the suite") { |value| set_option(:build_site, value) }
           opts.on("--list", "List benchmark suites and scenarios") do
             puts "suites: #{SUITES.keys.join(", ")}"
@@ -182,7 +189,7 @@ module Raptor
       end
 
       def explicit_suite_overrides
-        %i[profile requests warmup_requests concurrency repeats sample_interval sample_count min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
+        %i[profile requests warmup_requests concurrency timeout repeats sample_interval sample_count min_duration_s warmup_duration_s].each_with_object({}) do |name, overrides|
           overrides[name] = @options[name] if @explicit[name]
         end
       end

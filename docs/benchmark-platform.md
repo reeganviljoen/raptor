@@ -72,13 +72,19 @@ The benchmark matrix runs one job per architecture:
 - `x64` on `ubuntu-24.04`
 - `arm64` on `ubuntu-24.04-arm`
 
+For public repositories, those standard Linux runners are the largest no-extra-cost GitHub-hosted Linux runners currently available for this workflow shape: both labels provide 4 CPUs, 16 GB RAM, and 14 GB SSD. Larger GitHub-hosted runners add more CPU, memory, and disk, but they are a paid organization/enterprise feature. The benchmark workflow therefore keeps the standard runner labels and reduces runner pressure in the harness instead of switching to premium runner labels.
+
 Each matrix job runs both `yjit-off` and `yjit-on` for both Puma and Raptor, and writes a single run report for that architecture. The Pages job downloads the architecture artifacts, merges them into the durable `benchmark-history` branch, builds the static dashboard, writes one aggregate report per machine architecture under `architectures/<arch>/index.html`, and deploys the dashboard with GitHub Pages.
 
 Merge and scheduled runs use the `standard` suite by default. Manual runs can choose `smoke`, `standard`, or `full`, and can disable Pages deployment while still producing downloadable artifacts.
 
 GitHub Pages must be configured to use GitHub Actions as the source. The workflow uses the official Pages artifact/deploy flow, so the deploy job needs `pages: write`, `id-token: write`, and `contents: write` so it can push the updated `benchmark-history` branch before deploying the rendered dashboard.
 
-Benchmark commands emit `[raptor-benchmark]` progress lines for each run, server, and measured case. In GitHub Actions, those lines show which runtime, adapter profile, scenario, and repeat is currently running, then print the measured duration, completions, errors, requests/sec, p99 latency, RSS, and sample count when the case finishes.
+Benchmark progress logging is off by default for the suite runner to keep Actions logs smaller and reduce incidental stdout work during long benchmark jobs. Pass `--progress` or set `RAPTOR_BENCH_PROGRESS=1` when debugging a stuck benchmark. Progress lines use the `[raptor-benchmark]` prefix and show the runtime, adapter profile, scenario, repeat, measured duration, completions, errors, requests/sec, p99 latency, RSS, and sample count.
+
+Benchmark request timeouts are longer in the suite runner than in the ad hoc simulator. The Puma-derived long-tail cases can intentionally occupy all server request slots for several seconds under high concurrency, especially on shared GitHub-hosted runners. The report now keeps zero-completion rows visible in a "No Result Rows" table and marks no-result chart positions with a red baseline marker so missing bars are diagnosable instead of silently blank.
+
+The Pages builder regenerates each run's `report.html` from its stored `metadata.json`, `summary.json`, and `samples.ndjson` every time the dashboard is built. That means old benchmark-history runs keep their original data but receive the current report shell, chart grouping, modal behavior, and no-result diagnostics.
 
 ## Reading Results
 
