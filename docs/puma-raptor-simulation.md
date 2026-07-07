@@ -62,12 +62,12 @@ Open `report.html` directly in a browser to inspect the offline tables and graph
 
 ## Profiles
 
-`quick` starts a Rails-representative Puma cluster with one worker per logical CPU and three request threads per worker. Raptor is matched to the same total request-slot capacity with `3N` Ractors for `N` logical CPUs.
+`quick` starts a Rails-representative Puma cluster without intentionally oversubscribing the CPU budget. Puma uses Rails' default three request threads per worker when the machine has at least three vCPUs, then chooses the largest worker count whose total request slots fit inside the detected vCPU count. Raptor is matched to the same total request-slot capacity.
 
 `full` uses the same server shape and leaves the broader benchmark-suite settings, such as scenarios, repeats, warmup, and measured duration, to the selected suite:
 
-- Puma with `N` workers and three threads per worker.
-- Raptor with `3N` Ractors.
+- Puma with capped workers and up to three threads per worker.
+- Raptor with one Ractor per Puma request slot.
 
 These modes describe equivalent request-slot capacity, not identical mechanics. Puma capacity is counted as `workers * threads`; Raptor capacity is its Ractor count. Puma workers are forked processes and Puma threads are request threads. Raptor workers are Ractors, and its Puma-like `threads` DSL is a worker-range hint rather than a request-thread pool.
 

@@ -39,7 +39,7 @@ Measured request counts are floors, not caps. Fast cases keep issuing requests u
 
 RSS/CPU sampling is normalized for apples-to-apples comparisons. Each benchmark case targets 20 measured samples by default. The sampler may collect more raw process-tree snapshots during a long case, then keeps an evenly spaced fixed-size subset for the summary, `samples.ndjson`, Markdown report, HTML report, and dashboard. That keeps a slow case from getting more memory/CPU observations than a fast case solely because it ran longer.
 
-All suite profiles are capacity-matched. Puma uses a Rails-representative cluster shape: one worker per logical CPU and three request threads per worker. Puma capacity is `workers * threads`; Raptor capacity is its Ractor count. Both `quick` and `full` create a matching Raptor profile with `3N` Ractors for `N` logical CPUs, so Puma and Raptor rows with the same request-slot count can be read side by side.
+All suite profiles are capacity-matched without intentionally oversubscribing the benchmark runner. Puma uses Rails' default three request threads per worker when the machine has at least three vCPUs, then chooses the largest worker count whose total request slots fit inside the detected vCPU count. Puma capacity is `workers * threads`; Raptor capacity is its Ractor count. Both `quick` and `full` create a matching Raptor profile with the same capacity as Puma, so Puma and Raptor rows can be read side by side without comparing a CPU-saturated Ractor shape against a smaller Puma shape. On a 4-vCPU GitHub runner, for example, the suite uses `puma-1w-3t` and `raptor-3r`.
 
 To run one axis locally, pass the runtime explicitly:
 

@@ -162,25 +162,41 @@ class SimulationTest < Minitest::Test
   def test_quick_profile_has_one_raptor_and_one_puma_profile
     profiles = Raptor::Simulation::Configuration.profile("quick")
     cpu_count = [Etc.nprocessors, 1].max
-    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
+    threads = [Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS, cpu_count].min
+    workers = [cpu_count / threads, 1].max
+    capacity = workers * threads
 
     assert_equal ["raptor", "puma"], profiles.map(&:adapter)
     assert_equal "raptor-#{capacity}r", profiles.first.label
-    assert_equal "puma-#{cpu_count}w-3t", profiles.last.label
+    assert_equal "puma-#{workers}w-#{threads}t", profiles.last.label
     assert_equal [capacity, capacity], profiles.map(&:capacity)
+    assert_operator capacity, :<=, cpu_count
   end
 
-  def test_full_profile_uses_rails_default_threads_and_matching_ractors
+  def test_full_profile_caps_capacity_to_vcpus_and_matches_ractors
     profiles = Raptor::Simulation::Configuration.profile("full")
     cpu_count = [Etc.nprocessors, 1].max
-    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
+    threads = [Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS, cpu_count].min
+    workers = [cpu_count / threads, 1].max
+    capacity = workers * threads
     puma = profiles.find { |profile| profile.adapter == "puma" }
 
     assert_equal 2, profiles.length
     assert_equal ["raptor", "puma"], profiles.map(&:adapter)
-    assert_equal cpu_count, puma.workers
-    assert_equal 3, puma.threads
+    assert_equal workers, puma.workers
+    assert_equal threads, puma.threads
     assert_equal [capacity, capacity], profiles.map(&:capacity)
+    assert_operator capacity, :<=, cpu_count
+  end
+
+  def test_rails_puma_profile_uses_thread_capacity_without_oversaturating_vcpus
+    two_cpu = Raptor::Simulation::Configuration.rails_puma_profile(2)
+    four_cpu = Raptor::Simulation::Configuration.rails_puma_profile(4)
+    twelve_cpu = Raptor::Simulation::Configuration.rails_puma_profile(12)
+
+    assert_equal ["puma-1w-2t", 2], [two_cpu.label, two_cpu.capacity]
+    assert_equal ["puma-1w-3t", 3], [four_cpu.label, four_cpu.capacity]
+    assert_equal ["puma-4w-3t", 12], [twelve_cpu.label, twelve_cpu.capacity]
   end
 
   def test_runtime_profiles_can_select_yjit_on_and_off
