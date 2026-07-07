@@ -475,6 +475,12 @@ class SimulationTest < Minitest::Test
   end
 
   def test_html_report_contains_tables_and_inline_graphs
+    scenarios = [
+      ["puma-response-string-1kb", 1],
+      ["puma-response-string-10kb", 2],
+      ["puma-long-tail-fib-200ms-x1p5", 3],
+      ["puma-sleep-fibonacci-25ms", 4]
+    ]
     metadata = {
       "run_id" => "test-run",
       "created_at" => "2026-07-06T00:00:00Z",
@@ -503,14 +509,16 @@ class SimulationTest < Minitest::Test
           "message" => "YJIT comparisons need more warmup."
         }
       ],
-      "scenarios" => ["tiny"]
+      "scenarios" => scenarios.map(&:first)
     }
-    rows = [
-      benchmark_row("yjit-off", "tiny", "raptor-5r", "raptor", 1200.0, 1.2, 22.0),
-      benchmark_row("yjit-on", "tiny", "raptor-5r", "raptor", 1300.0, 1.1, 24.0),
-      benchmark_row("yjit-off", "tiny", "puma-single-5t", "puma", 1400.0, 0.9, 30.0),
-      benchmark_row("yjit-on", "tiny", "puma-single-5t", "puma", 1500.0, 0.8, 33.0)
-    ]
+    rows = scenarios.flat_map do |scenario, multiplier|
+      [
+        benchmark_row("yjit-off", scenario, "raptor-5r", "raptor", 100.0 * multiplier, 1.2 * multiplier, 22.0 * multiplier),
+        benchmark_row("yjit-on", scenario, "raptor-5r", "raptor", 1000.0 * multiplier, 1.1 * multiplier, 24.0 * multiplier),
+        benchmark_row("yjit-off", scenario, "puma-single-5t", "puma", 200.0 * multiplier, 0.9 * multiplier, 30.0 * multiplier),
+        benchmark_row("yjit-on", scenario, "puma-single-5t", "puma", 2000.0 * multiplier, 0.8 * multiplier, 33.0 * multiplier)
+      ]
+    end
 
     Dir.mktmpdir do |dir|
       path = File.join(dir, "report.html")
@@ -529,6 +537,25 @@ class SimulationTest < Minitest::Test
       assert_includes html, "short_yjit_warmup"
       assert_includes html, "Benchmark Source Coverage"
       assert_includes html, "Throughput And Latency"
+      assert_includes html, "Charted Comparisons"
+      assert_includes html, "Response body: String"
+      assert_includes html, "Long-tail concurrency sweep"
+      assert_includes html, "Sleep/fibonacci delay sweep"
+      assert_includes html, "YJIT on"
+      assert_includes html, "YJIT off"
+      assert_includes html, "Best median throughput (requests/sec)"
+      assert_includes html, "Lowest median p99 latency (ms)"
+      assert_includes html, "Lowest median peak RSS (MB)"
+      assert_includes html, ">1 KB<"
+      assert_includes html, ">10 KB<"
+      assert_includes html, ">x1.5<"
+      assert_includes html, ">25 ms<"
+      assert_includes html, "metric-grid"
+      assert_includes html, "chart-compact"
+      assert_equal 18, html.scan(/<figure class="chart chart-compact"/).length
+      assert_includes html, 'data-fixed-max="4000.0"'
+      assert_match(/<h4>YJIT off<\/h4>.*?<figcaption>Best median throughput \(requests\/sec\).*?<text class="tick" data-axis-max[^>]*>4000.0<\/text>/m, html)
+      refute_includes html, "Throughput By Scenario"
       assert_includes html, "data-chart-toggle"
       assert_includes html, "data-scenario-label"
       assert_includes html, "RSS/CPU sample target"
