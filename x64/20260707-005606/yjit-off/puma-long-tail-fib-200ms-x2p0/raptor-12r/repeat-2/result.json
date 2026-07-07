@@ -1,0 +1,123 @@
+{
+  "run_id": "yjit-off/puma-long-tail-fib-200ms-x2p0/raptor-12r/repeat-2",
+  "runtime": "yjit-off",
+  "yjit": false,
+  "scenario": "puma-long-tail-fib-200ms-x2p0",
+  "scenario_family": "puma-long-tail-hey",
+  "benchmark_source": "puma/benchmarks/local/long_tail_hey + test/rackup/sleep_fibonacci",
+  "benchmark_source_url": "https://github.com/puma/puma/blob/main/benchmarks/local/long_tail_hey.rb",
+  "server": "raptor-12r",
+  "server_capacity": 12,
+  "adapter": "raptor",
+  "workers": 12,
+  "threads": null,
+  "target_requests": 480,
+  "requests": 480,
+  "duration_s": 5.012,
+  "min_duration_s": 5.0,
+  "target_warmup_requests": 480,
+  "warmup_requests": 480,
+  "warmup_duration_s": 5.011,
+  "warmup_min_duration_s": 2.0,
+  "concurrency": 24,
+  "keep_alive": true,
+  "completed": 0,
+  "errors": 480,
+  "achieved_rps": 0.0,
+  "p50_ms": null,
+  "p95_ms": null,
+  "p99_ms": null,
+  "p999_ms": null,
+  "max_ms": null,
+  "rss_mb_peak": 172.336,
+  "rss_mb_end": 172.336,
+  "cpu_pct_avg": 24.145,
+  "target_sample_count": 20,
+  "sample_count": 20,
+  "raw_sample_count": 72,
+  "gc_count_delta": null,
+  "total_allocated_objects_delta": null,
+  "status_counts": {},
+  "measurement": {
+    "target_requests": 480,
+    "min_duration_s": 5.0,
+    "requests": 480,
+    "completed": 0,
+    "errors": {
+      "Net::OpenTimeout": 480
+    },
+    "status_counts": {},
+    "bytes": 0,
+    "duration_s": 5.012,
+    "achieved_rps": 0.0,
+    "latency_ms": {
+      "count": 0,
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null,
+      "p50_ms": null,
+      "p75_ms": null,
+      "p90_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "p999_ms": null
+    },
+    "histogram_ms": {}
+  },
+  "memory": {
+    "available": true,
+    "rss_kb_peak": 176472,
+    "rss_kb_end": 176472,
+    "rss_mb_peak": 172.336,
+    "rss_mb_end": 172.336,
+    "cpu_pct_avg": 24.145,
+    "target_sample_count": 20,
+    "raw_sample_count": 72,
+    "sample_count": 20
+  },
+  "gc_delta": {
+    "count": null,
+    "minor_gc_count": null,
+    "major_gc_count": null,
+    "total_allocated_objects": null,
+    "total_freed_objects": null,
+    "heap_live_slots": null,
+    "heap_free_slots": null,
+    "malloc_increase_bytes": null,
+    "oldmalloc_increase_bytes": null,
+    "gc_count": null
+  },
+  "gc_delta_scope": "unavailable",
+  "gc_metrics_before": {
+    "error": "Net::OpenTimeout: Failed to open TCP connection to 127.0.0.1:41005 (user specified timeout for 127.0.0.1:41005)"
+  },
+  "gc_metrics_after": {
+    "error": "Net::OpenTimeout: Failed to open TCP connection to 127.0.0.1:41005 (user specified timeout for 127.0.0.1:41005)"
+  },
+  "warmup": {
+    "target_requests": 480,
+    "min_duration_s": 2.0,
+    "requests": 480,
+    "completed": 0,
+    "errors": {
+      "Net::OpenTimeout": 480
+    },
+    "status_counts": {},
+    "bytes": 0,
+    "duration_s": 5.011,
+    "achieved_rps": 0.0,
+    "latency_ms": {
+      "count": 0,
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null,
+      "p50_ms": null,
+      "p75_ms": null,
+      "p90_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "p999_ms": null
+    },
+    "histogram_ms": {}
+  }
+}
