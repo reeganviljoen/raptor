@@ -1,0 +1,19 @@
+[71196] Puma starting in cluster mode...
+[71196] * Puma version: 8.0.2 ("Into the Arena")
+[71196] * Ruby version: ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +YJIT +PRISM [aarch64-linux]
+[71196] *  Min threads: 3
+[71196] *  Max threads: 3
+[71196] *  Environment: production
+[71196] *   Master PID: 71196
+[71196] *      Workers: 4
+[71196] *     Restarts: (✔) hot (✖) phased (✖) refork
+[71196] * Preloading application
+[71196] * Listening on http://127.0.0.1:38365
+[71196] Use Ctrl-C to stop
+[71196] - Worker 0 (PID: 71198) booted in 0.0s, phase: 0
+[71196] - Worker 1 (PID: 71201) booted in 0.0s, phase: 0
+[71196] - Worker 2 (PID: 71204) booted in 0.0s, phase: 0
+[71196] - Worker 3 (PID: 71208) booted in 0.0s, phase: 0
+[71196] === puma shutdown: 2026-07-07 00:32:13 +0000 ===
+[71196] - Goodbye!
+[71196] - Gracefully shutting down workers...
