@@ -39,7 +39,7 @@ Measured request counts are floors, not caps. Fast cases keep issuing requests u
 
 RSS/CPU sampling is normalized for apples-to-apples comparisons. Each benchmark case targets 20 measured samples by default. The sampler may collect more raw process-tree snapshots during a long case, then keeps an evenly spaced fixed-size subset for the summary, `samples.ndjson`, Markdown report, HTML report, and dashboard. That keeps a slow case from getting more memory/CPU observations than a fast case solely because it ran longer.
 
-All suite profiles are capacity-matched. Puma uses a Rails-representative cluster shape: one worker per logical CPU and three request threads per worker. Puma capacity is `workers * threads`; Raptor capacity is its Ractor count. Both `quick` and `full` create a matching Raptor profile with `3N` Ractors for `N` logical CPUs, so Puma and Raptor rows with the same request-slot count can be read side by side.
+All suite profiles are capacity-matched without intentionally oversubscribing the benchmark runner. Puma uses Rails' default three request threads per worker when the machine has at least three vCPUs, then chooses the largest worker count whose total request slots fit inside the detected vCPU count. Puma capacity is `workers * threads`; Raptor capacity is its Ractor count. Both `quick` and `full` create a matching Raptor profile with the same capacity as Puma, so Puma and Raptor rows can be read side by side without comparing a CPU-saturated Ractor shape against a smaller Puma shape. On a 4-vCPU GitHub runner, for example, the suite uses `puma-1w-3t` and `raptor-3r`.
 
 To run one axis locally, pass the runtime explicitly:
 
@@ -72,13 +72,19 @@ The benchmark matrix runs one job per architecture:
 - `x64` on `ubuntu-24.04`
 - `arm64` on `ubuntu-24.04-arm`
 
+For public repositories, those standard Linux runners are the largest no-extra-cost GitHub-hosted Linux runners currently available for this workflow shape: both labels provide 4 CPUs, 16 GB RAM, and 14 GB SSD. Larger GitHub-hosted runners add more CPU, memory, and disk, but they are a paid organization/enterprise feature. The benchmark workflow therefore keeps the standard runner labels and reduces runner pressure in the harness instead of switching to premium runner labels.
+
 Each matrix job runs both `yjit-off` and `yjit-on` for both Puma and Raptor, and writes a single run report for that architecture. The Pages job downloads the architecture artifacts, merges them into the durable `benchmark-history` branch, builds the static dashboard, writes one aggregate report per machine architecture under `architectures/<arch>/index.html`, and deploys the dashboard with GitHub Pages.
 
 Merge and scheduled runs use the `standard` suite by default. Manual runs can choose `smoke`, `standard`, or `full`, and can disable Pages deployment while still producing downloadable artifacts.
 
 GitHub Pages must be configured to use GitHub Actions as the source. The workflow uses the official Pages artifact/deploy flow, so the deploy job needs `pages: write`, `id-token: write`, and `contents: write` so it can push the updated `benchmark-history` branch before deploying the rendered dashboard.
 
-Benchmark commands emit `[raptor-benchmark]` progress lines for each run, server, and measured case. In GitHub Actions, those lines show which runtime, adapter profile, scenario, and repeat is currently running, then print the measured duration, completions, errors, requests/sec, p99 latency, RSS, and sample count when the case finishes.
+Benchmark progress logging is off by default for the suite runner to keep Actions logs smaller and reduce incidental stdout work during long benchmark jobs. Pass `--progress` or set `RAPTOR_BENCH_PROGRESS=1` when debugging a stuck benchmark. Progress lines use the `[raptor-benchmark]` prefix and show the runtime, adapter profile, scenario, repeat, measured duration, completions, errors, requests/sec, p99 latency, RSS, and sample count.
+
+Benchmark request timeouts are longer in the suite runner than in the ad hoc simulator. The Puma-derived long-tail cases can intentionally occupy all server request slots for several seconds under high concurrency, especially on shared GitHub-hosted runners. The report now keeps zero-completion rows visible in a "No Result Rows" table and marks no-result chart positions with a red baseline marker so missing bars are diagnosable instead of silently blank.
+
+The Pages builder regenerates each run's `report.html` from its stored `metadata.json`, `summary.json`, and `samples.ndjson` every time the dashboard is built. That means old benchmark-history runs keep their original data but receive the current report shell, chart grouping, modal behavior, and no-result diagnostics.
 
 ## Reading Results
 

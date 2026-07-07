@@ -160,6 +160,8 @@ module Raptor
         html << section("Benchmark Source Coverage", source_coverage_table(rows))
         html << section("Throughput And Latency", throughput_latency_notes)
         html << section("Charted Comparisons", chart_breakdown(adapter_rows))
+        no_result_html = no_result_table(rows)
+        html << section("No Result Rows", no_result_html) if no_result_html
         html << section("Adapter Comparison", adapter_table(adapter_rows))
         html << section("All Measured Runs", raw_rows_table(rows))
         html << section("RSS Sample Coverage", sample_summary(samples))
@@ -346,6 +348,28 @@ module Raptor
           <p>Throughput and latency measure related but different things. Throughput is completed requests per measured second, while latency percentiles describe only selected points in the request distribution. With a fixed closed-loop concurrency, a server can show better p50 or p95 latency and still have lower throughput if more time is spent in tail requests, scheduling, GC, process coordination, or other overhead that reduces total completions.</p>
           <p>Use the raw rows when this happens: compare completed requests, measured duration, p50, p95, p99, p99.9, CPU, RSS, and errors together. A lower p50 with a worse p99 or fewer completions usually means the common case got faster but some request slots stayed occupied long enough to pull throughput down.</p>
         HTML
+      end
+
+      def no_result_table(rows)
+        failed = rows.select { |row| no_result_row?(row) }
+        return nil if failed.empty?
+
+        table(
+          ["Runtime", "Scenario", "Adapter", "Server", "Capacity", "Requests", "Errors", "Error classes", "Duration s"],
+          failed.sort_by { |row| [row["runtime"].to_s, row["scenario"].to_s, row["adapter"].to_s, row["server"].to_s] }.map do |row|
+            [
+              row["runtime"],
+              row["scenario"],
+              row["adapter"],
+              row["server"],
+              row["server_capacity"],
+              row["requests"],
+              row["errors"],
+              error_summary(row),
+              format_number(row["duration_s"])
+            ]
+          end
+        )
       end
 
       def chart_breakdown(rows)
@@ -590,14 +614,19 @@ module Raptor
           svg << "<text class=\"x-label\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" data-scenario-label=\"#{h(scenario)}\" x=\"#{center.round(2)}\" y=\"#{plot_bottom + 26}\" text-anchor=\"middle\">#{h(scenario_labels.fetch(scenario, scenario))}</text>"
 
           series.each_with_index do |series_name, series_index|
+            row = rows.find { |candidate| candidate["scenario"] == scenario && candidate["series"] == series_name }
             value = values[[scenario, series_name]]
-            next unless value
+            no_result = row && no_result_row?(row)
+            next unless value || no_result
 
             x = center - ((series.length * bar_width) / 2.0) + (series_index * bar_width)
-            bar_height = (value / max) * plot_height
+            bar_height = no_result ? 3 : (value / max) * plot_height
             y = plot_bottom - bar_height
-            svg << "<rect class=\"bar\" role=\"button\" tabindex=\"0\" aria-pressed=\"true\" data-scenario=\"#{h(scenario)}\" data-series=\"#{h(series_name)}\" data-value=\"#{h(value)}\" data-plot-bottom=\"#{plot_bottom}\" data-plot-height=\"#{plot_height}\" style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{[bar_width - 4, 6].max.round(2)}\" height=\"#{bar_height.round(2)}\">"
-            svg << "<title>#{h(scenario)} #{h(series_name)}: #{h(format_number(value))}</title>"
+            no_result_attribute = no_result ? " data-no-result=\"true\"" : ""
+            bar_class = no_result ? "bar is-no-result" : "bar"
+            svg << "<rect class=\"#{bar_class}\" role=\"button\" tabindex=\"0\" aria-pressed=\"true\" data-scenario=\"#{h(scenario)}\" data-series=\"#{h(series_name)}\" data-value=\"#{h(value)}\" data-plot-bottom=\"#{plot_bottom}\" data-plot-height=\"#{plot_height}\"#{no_result_attribute} style=\"fill: #{h(series_color(series_name))}\" x=\"#{x.round(2)}\" y=\"#{y.round(2)}\" width=\"#{[bar_width - 4, 6].max.round(2)}\" height=\"#{bar_height.round(2)}\">"
+            title = no_result ? "#{scenario} #{series_name}: no completed requests; errors=#{row["errors"]}" : "#{scenario} #{series_name}: #{format_number(value)}"
+            svg << "<title>#{h(title)}</title>"
             svg << "</rect>"
           end
         end
@@ -653,6 +682,17 @@ module Raptor
           end
 
         [adapter_rank, series_name]
+      end
+
+      def no_result_row?(row)
+        Integer(row["completed"] || 0).zero? && Integer(row["errors"] || 0).positive?
+      end
+
+      def error_summary(row)
+        errors = row.dig("measurement", "errors")
+        return "n/a" unless errors.is_a?(Hash) && errors.any?
+
+        errors.map { |name, count| "#{name}=#{count}" }.join(", ")
       end
 
       def table(headers, rows)
@@ -727,13 +767,15 @@ module Raptor
 
               allBars.forEach(function (bar) {
                 var isHidden = hidden.has(bar.dataset.series) || (focusScenario && bar.dataset.scenario !== focusScenario);
+                var isNoResult = bar.dataset.noResult === "true";
                 var value = number(bar.dataset.value) || 0;
                 var bottom = number(bar.dataset.plotBottom) || 0;
                 var plotHeight = number(bar.dataset.plotHeight) || 0;
-                var height = isHidden ? 3 : (value / max) * plotHeight;
+                var height = (isHidden || isNoResult) ? 3 : (value / max) * plotHeight;
                 bar.setAttribute("y", format(bottom - height));
                 bar.setAttribute("height", format(height));
                 bar.classList.toggle("is-hidden", isHidden);
+                bar.classList.toggle("is-no-result", isNoResult);
                 bar.setAttribute("aria-pressed", isHidden ? "false" : "true");
               });
 
@@ -995,6 +1037,7 @@ module Raptor
           .tick, .x-label, .legend-label { fill: var(--muted); font-size: 12px; }
           .bar, .legend-item, .x-label { cursor: pointer; transition: opacity 120ms ease; }
           .bar:focus-visible, .legend-item:focus-visible, .x-label:focus-visible { outline: 2px solid #315fba; outline-offset: 2px; }
+          .bar.is-no-result { fill: #b3261e !important; opacity: 0.95; }
           .bar.is-hidden { opacity: 0.2; }
           .legend-item.is-hidden, .x-label.is-hidden { opacity: 0.4; }
           .x-label.is-focused { font-weight: 700; fill: var(--ink); }

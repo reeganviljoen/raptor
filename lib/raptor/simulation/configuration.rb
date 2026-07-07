@@ -202,7 +202,10 @@ module Raptor
       end
 
       def rails_puma_profile(cpu_count)
-        ServerProfile.new(name: "puma-cluster-n-threads-#{RAILS_DEFAULT_THREADS}", adapter: "puma", workers: cpu_count, threads: RAILS_DEFAULT_THREADS)
+        threads = [RAILS_DEFAULT_THREADS, cpu_count].min
+        workers = [cpu_count / threads, 1].max
+
+        ServerProfile.new(name: "puma-cluster-capped-threads-#{threads}", adapter: "puma", workers: workers, threads: threads)
       end
 
       def matched_profiles(puma_profiles)

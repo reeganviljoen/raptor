@@ -162,25 +162,41 @@ class SimulationTest < Minitest::Test
   def test_quick_profile_has_one_raptor_and_one_puma_profile
     profiles = Raptor::Simulation::Configuration.profile("quick")
     cpu_count = [Etc.nprocessors, 1].max
-    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
+    threads = [Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS, cpu_count].min
+    workers = [cpu_count / threads, 1].max
+    capacity = workers * threads
 
     assert_equal ["raptor", "puma"], profiles.map(&:adapter)
     assert_equal "raptor-#{capacity}r", profiles.first.label
-    assert_equal "puma-#{cpu_count}w-3t", profiles.last.label
+    assert_equal "puma-#{workers}w-#{threads}t", profiles.last.label
     assert_equal [capacity, capacity], profiles.map(&:capacity)
+    assert_operator capacity, :<=, cpu_count
   end
 
-  def test_full_profile_uses_rails_default_threads_and_matching_ractors
+  def test_full_profile_caps_capacity_to_vcpus_and_matches_ractors
     profiles = Raptor::Simulation::Configuration.profile("full")
     cpu_count = [Etc.nprocessors, 1].max
-    capacity = cpu_count * Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS
+    threads = [Raptor::Simulation::Configuration::RAILS_DEFAULT_THREADS, cpu_count].min
+    workers = [cpu_count / threads, 1].max
+    capacity = workers * threads
     puma = profiles.find { |profile| profile.adapter == "puma" }
 
     assert_equal 2, profiles.length
     assert_equal ["raptor", "puma"], profiles.map(&:adapter)
-    assert_equal cpu_count, puma.workers
-    assert_equal 3, puma.threads
+    assert_equal workers, puma.workers
+    assert_equal threads, puma.threads
     assert_equal [capacity, capacity], profiles.map(&:capacity)
+    assert_operator capacity, :<=, cpu_count
+  end
+
+  def test_rails_puma_profile_uses_thread_capacity_without_oversaturating_vcpus
+    two_cpu = Raptor::Simulation::Configuration.rails_puma_profile(2)
+    four_cpu = Raptor::Simulation::Configuration.rails_puma_profile(4)
+    twelve_cpu = Raptor::Simulation::Configuration.rails_puma_profile(12)
+
+    assert_equal ["puma-1w-2t", 2], [two_cpu.label, two_cpu.capacity]
+    assert_equal ["puma-1w-3t", 3], [four_cpu.label, four_cpu.capacity]
+    assert_equal ["puma-4w-3t", 12], [twelve_cpu.label, twelve_cpu.capacity]
   end
 
   def test_runtime_profiles_can_select_yjit_on_and_off
@@ -288,6 +304,20 @@ class SimulationTest < Minitest::Test
     assert_equal 6.0, settings.fetch(:min_duration_s)
     assert_equal 3.0, settings.fetch(:warmup_duration_s)
     assert_equal 30, settings.fetch(:sample_count)
+  end
+
+  def test_benchmark_suite_progress_logging_is_opt_in_and_timeout_is_configurable
+    cli = Raptor::Simulation::BenchmarkSuiteCLI.new(%w[--suite smoke])
+    cli.send(:parse!)
+
+    assert_equal false, cli.instance_variable_get(:@options).fetch(:progress)
+    assert_equal 30, cli.send(:suite_settings).fetch(:timeout)
+
+    verbose = Raptor::Simulation::BenchmarkSuiteCLI.new(%w[--suite smoke --progress --timeout 45])
+    verbose.send(:parse!)
+
+    assert_equal true, verbose.instance_variable_get(:@options).fetch(:progress)
+    assert_equal 45.0, verbose.send(:suite_settings).fetch(:timeout)
   end
 
   def test_workload_rackup_contains_required_probe_endpoints
@@ -519,6 +549,7 @@ class SimulationTest < Minitest::Test
         benchmark_row("yjit-on", scenario, "puma-single-5t", "puma", 2000.0 * multiplier, 0.8 * multiplier, 33.0 * multiplier)
       ]
     end
+    rows << failed_benchmark_row("yjit-off", "puma-sleep-fibonacci-50ms", "raptor-5r", "raptor")
 
     Dir.mktmpdir do |dir|
       path = File.join(dir, "report.html")
@@ -560,6 +591,10 @@ class SimulationTest < Minitest::Test
       assert_includes html, "data-chart-modal-content"
       assert_includes html, "data-chart-modal-close"
       assert_includes html, 'data-fixed-max="4000.0"'
+      assert_includes html, "No Result Rows"
+      assert_includes html, "Net::ReadTimeout=10"
+      assert_includes html, "data-no-result"
+      assert_includes html, "no completed requests"
       assert_match(/<h4>YJIT off<\/h4>.*?<figcaption>Best median throughput \(requests\/sec\).*?<text class="tick" data-axis-max[^>]*>4000.0<\/text>/m, html)
       refute_includes html, "Throughput By Scenario"
       assert_includes html, "data-chart-toggle"
@@ -610,7 +645,8 @@ class SimulationTest < Minitest::Test
       File.write(File.join(run_dir, "metadata.json"), "#{JSON.pretty_generate(metadata)}\n")
       File.write(File.join(run_dir, "summary.json"), "#{JSON.pretty_generate(rows)}\n")
       File.write(File.join(run_dir, "summary.csv"), "runtime,scenario\n")
-      File.write(File.join(run_dir, "report.html"), "<!doctype html><p>report</p>\n")
+      File.write(File.join(run_dir, "samples.ndjson"), "")
+      File.write(File.join(run_dir, "report.html"), "<!doctype html><p>stale report shell</p>\n")
 
       result = Raptor::Simulation::BenchmarkSite.build(input_roots: [run_root], output_dir: site_dir, title: "Test Benchmarks")
       index = File.read(result.fetch("index"))
@@ -627,6 +663,9 @@ class SimulationTest < Minitest::Test
       assert_includes architecture, "Architecture benchmark report"
       assert_includes architecture, "arm64 Test Benchmarks"
       assert_includes index, "runs/20260706-000000-smoke-arm64-all-runtimes/report.html"
+      regenerated_report = File.read(File.join(site_dir, "runs", "20260706-000000-smoke-arm64-all-runtimes", "report.html"))
+      assert_includes regenerated_report, "Puma vs Raptor Simulation"
+      refute_includes regenerated_report, "stale report shell"
       assert_equal "arm64-all-runtimes", combined.fetch("runs").first.fetch("benchmark_axis")
       assert File.exist?(File.join(site_dir, "data", "summary.csv"))
       assert File.exist?(File.join(site_dir, "data", "architectures", "arm64.json"))
@@ -680,6 +719,21 @@ class SimulationTest < Minitest::Test
       "gc_count_delta" => 1,
       "total_allocated_objects_delta" => 100
     }
+  end
+
+  def failed_benchmark_row(runtime, scenario, server, adapter)
+    benchmark_row(runtime, scenario, server, adapter, 0.0, 0.0, 24.0).merge(
+      "completed" => 0,
+      "errors" => 10,
+      "p50_ms" => nil,
+      "p95_ms" => nil,
+      "p99_ms" => nil,
+      "p999_ms" => nil,
+      "max_ms" => nil,
+      "measurement" => {
+        "errors" => { "Net::ReadTimeout" => 10 }
+      }
+    )
   end
 
   def server_shape(server, adapter)
