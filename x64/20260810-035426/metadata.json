@@ -1,0 +1,133 @@
+{
+  "run_id": "20260810-035426",
+  "created_at": "2026-08-10T03:54:26Z",
+  "ruby": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [x86_64-linux]",
+  "raptor_version": "0.1.0",
+  "rack_version": "3.2.6",
+  "puma_version": "8.0.2",
+  "git_sha": "78b569a",
+  "cpu_count": 4,
+  "platform": "x86_64-linux",
+  "machine_arch": "x64",
+  "machine_os": "ubuntu-24.04",
+  "benchmark_suite": "standard",
+  "benchmark_axis": "x64-all-runtimes",
+  "runner_label": "ubuntu-24.04",
+  "github_run_id": "31353895895",
+  "github_run_attempt": "1",
+  "allocator": null,
+  "malloc_arena_max": null,
+  "harness_yjit": false,
+  "requests": 1000,
+  "concurrency": 8,
+  "warmup_requests": 1000,
+  "min_duration_s": 5.0,
+  "warmup_duration_s": 2.0,
+  "sample_interval_s": 0.5,
+  "sample_count": 20,
+  "repeats": 3,
+  "keep_alive": true,
+  "quality_warnings": [
+    {
+      "code": "closed_loop_client",
+      "severity": "caution",
+      "message": "This harness uses a closed-loop Ruby Net::HTTP client. Confirm production tail-latency claims with a constant-rate load tool."
+    }
+  ],
+  "runtime_profiles": [
+    {
+      "name": "yjit-off",
+      "label": "yjit-off",
+      "ruby_options": [
+        "--disable=yjit"
+      ],
+      "yjit": false
+    },
+    {
+      "name": "yjit-on",
+      "label": "yjit-on",
+      "ruby_options": [
+        "--yjit"
+      ],
+      "yjit": true
+    }
+  ],
+  "profiles": [
+    {
+      "name": "raptor-ractors-3",
+      "adapter": "raptor",
+      "workers": 3,
+      "threads": null,
+      "capacity": 3,
+      "label": "raptor-3r"
+    },
+    {
+      "name": "puma-cluster-capped-threads-3",
+      "adapter": "puma",
+      "workers": 1,
+      "threads": 3,
+      "capacity": 3,
+      "label": "puma-1w-3t"
+    }
+  ],
+  "scenarios": [
+    "puma-response-array-1kb",
+    "puma-response-chunk-1kb",
+    "puma-response-string-1kb",
+    "puma-response-io-1kb",
+    "puma-response-array-10kb",
+    "puma-response-chunk-10kb",
+    "puma-response-string-10kb",
+    "puma-response-io-10kb",
+    "puma-response-array-100kb",
+    "puma-response-chunk-100kb",
+    "puma-response-string-100kb",
+    "puma-response-io-100kb",
+    "puma-response-array-256kb",
+    "puma-response-chunk-256kb",
+    "puma-response-string-256kb",
+    "puma-response-io-256kb",
+    "puma-response-array-512kb",
+    "puma-response-chunk-512kb",
+    "puma-response-string-512kb",
+    "puma-response-io-512kb",
+    "puma-response-array-1024kb",
+    "puma-response-chunk-1024kb",
+    "puma-response-string-1024kb",
+    "puma-response-io-1024kb",
+    "puma-response-array-2048kb",
+    "puma-response-chunk-2048kb",
+    "puma-response-string-2048kb",
+    "puma-response-io-2048kb",
+    "puma-long-tail-fib-200ms-x6p0",
+    "puma-long-tail-fib-200ms-x4p0",
+    "puma-long-tail-fib-200ms-x3p0",
+    "puma-long-tail-fib-200ms-x2p0",
+    "puma-long-tail-fib-200ms-x1p5",
+    "puma-long-tail-fib-200ms-x1p0",
+    "puma-long-tail-fib-200ms-x0p5",
+    "puma-sleep-fibonacci-1ms",
+    "puma-sleep-fibonacci-5ms",
+    "puma-sleep-fibonacci-10ms",
+    "puma-sleep-fibonacci-50ms",
+    "puma-sleep-fibonacci-100ms",
+    "puma-sleep-fibonacci-200ms"
+  ],
+  "benchmark_sources": [
+    {
+      "label": "puma/benchmarks/local/response_time_wrk",
+      "family": "puma-response-time-wrk",
+      "url": "https://github.com/puma/puma/blob/main/benchmarks/local/response_time_wrk.rb"
+    },
+    {
+      "label": "puma/benchmarks/local/long_tail_hey + test/rackup/sleep_fibonacci",
+      "family": "puma-long-tail-hey",
+      "url": "https://github.com/puma/puma/blob/main/benchmarks/local/long_tail_hey.rb"
+    },
+    {
+      "label": "puma/benchmarks/local/sleep_fibonacci_test + test/rackup/sleep_fibonacci",
+      "family": "puma-sleep-fibonacci-test",
+      "url": "https://github.com/puma/puma/blob/main/benchmarks/local/sleep_fibonacci_test.rb"
+    }
+  ]
+}
