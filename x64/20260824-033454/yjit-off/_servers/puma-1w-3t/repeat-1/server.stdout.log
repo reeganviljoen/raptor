@@ -1,0 +1,19 @@
+[25308] Puma starting in cluster mode...
+[25308] * Puma version: 8.0.2 ("Into the Arena")
+[25308] * Ruby version: ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [x86_64-linux]
+[25308] *  Min threads: 3
+[25308] *  Max threads: 3
+[25308] *  Environment: production
+[25308] *   Master PID: 25308
+[25308] *      Workers: 1
+[25308] *     Restarts: (✔) hot (✔) phased (✖) refork
+[25308] * Listening on http://127.0.0.1:38781
+[25308] Use Ctrl-C to stop
+[25308] ! WARNING: Detected running cluster mode with 1 worker.
+[25308] ! Running Puma in cluster mode with a single worker is often a misconfiguration.
+[25308] ! Consider running Puma in single-mode (workers = 0) in order to reduce memory overhead.
+[25308] ! Set the `silence_single_worker_warning` option to silence this warning message.
+[25308] - Worker 0 (PID: 25310) booted in 0.01s, phase: 0
+[25308] === puma shutdown: 2026-08-24 04:33:22 +0000 ===
+[25308] - Goodbye!
+[25308] - Gracefully shutting down workers...
