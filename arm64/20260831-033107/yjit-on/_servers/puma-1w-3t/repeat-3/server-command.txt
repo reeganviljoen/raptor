@@ -1,0 +1,1 @@
+/opt/hostedtoolcache/Ruby/4.0.6/arm64/bin/ruby --yjit /home/runner/work/raptor/raptor/vendor/bundle/ruby/4.0.0/gems/puma-8.0.2/bin/puma --no-config -q -b tcp://127.0.0.1:40065 -t 3:3 -w 1 /tmp/raptor-simulation20260831-2476-jxwsfc/config.ru
