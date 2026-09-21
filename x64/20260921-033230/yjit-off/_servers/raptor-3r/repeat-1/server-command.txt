@@ -1,0 +1,1 @@
+/opt/hostedtoolcache/Ruby/4.0.7/x64/bin/ruby --disable=yjit /home/runner/work/raptor/raptor/bin/raptor -q -b tcp://127.0.0.1:40153 -w 3 /tmp/raptor-simulation20260921-2434-tdv2e3/config.ru
