@@ -1,0 +1,1 @@
+/opt/hostedtoolcache/Ruby/4.0.7/arm64/bin/ruby --yjit /home/runner/work/raptor/raptor/bin/raptor -q -b tcp://127.0.0.1:46391 -w 3 /tmp/raptor-simulation20261005-2415-e2vipj/config.ru
